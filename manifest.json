@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "CodeMentor AI - Your DSA Learning Companion",
+  "version": "1.0.0",
+  "description": "AI-powered mentor that helps you solve DSA problems without giving away solutions",
+  
+  "icons": {
+    "16": "assets/logo-16.png",
+    "32": "assets/logo-32.png",
+    "48": "assets/logo-48.png",
+    "128": "assets/logo-128.png"
+  },
+
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+
+  "host_permissions": [
+    "https://leetcode.com/*",
+    "https://codeforces.com/*",
+    "https://www.hackerrank.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://leetcode.com/problems/*",
+        "https://codeforces.com/problemset/problem/*",
+        "https://www.hackerrank.com/challenges/*",
+        "https://www.hackerrank.com/contests/*/challenges/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles/sidebar.css"],
+      "run_at": "document_end"
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["sidebar.html", "assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "action": {
+    "default_title": "CodeMentor AI",
+    "default_icon": {
+      "16": "assets/logo-16.png",
+      "32": "assets/logo-32.png",
+      "48": "assets/logo-48.png",
+      "128": "assets/logo-128.png"
+    }
+  }
+}

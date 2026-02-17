@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeMentor AI</title>
+    <link rel="stylesheet" href="styles/sidebar.css">
+</head>
+<body>
+    <div class="codementor-container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo-section">
+                <img src="assets/logo-32.png" alt="CodeMentor AI" class="logo">
+                <h1>CodeMentor AI</h1>
+            </div>
+            <button class="close-btn" id="closeSidebar">✕</button>
+        </div>
+
+        <!-- Problem Info Section -->
+        <div class="problem-section" id="problemSection">
+            <div class="problem-header">
+                <h2 id="problemTitle">Loading problem...</h2>
+                <span class="platform-badge" id="platformBadge">LeetCode</span>
+            </div>
+            <div class="difficulty" id="difficulty">Loading difficulty...</div>
+        </div>
+
+        <!-- Tabs Navigation -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="mentor">AI Mentor</button>
+            <button class="tab-btn" data-tab="approaches">Approaches</button>
+            <button class="tab-btn" data-tab="hints">Hints</button>
+            <button class="tab-btn" data-tab="progress">Progress</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="tab-content">
+            <!-- AI Mentor Tab (Chat) -->
+            <div class="tab-pane active" id="mentorTab">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message ai-message">
+                        <div class="avatar">🤖</div>
+                        <div class="message-content">
+                            <p>Hi! I'm your AI mentor. I see you're working on this problem. What's your thought process? Share your approach and I'll guide you without spoiling the solution.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Intuition Box -->
+                <div class="intuition-box" id="intuitionBox" style="display: none;">
+                    <h3>💡 Problem Intuition</h3>
+                    <p id="intuitionText"></p>
+                </div>
+
+                <div class="chat-input-area">
+                    <textarea 
+                        id="userInput" 
+                        placeholder="Ask me anything about this problem..."
+                        rows="2"
+                    ></textarea>
+                    <button id="sendMessage" class="send-btn">Send</button>
+                </div>
+            </div>
+
+            <!-- Approaches Tab -->
+            <div class="tab-pane" id="approachesTab">
+                <div class="approaches-list" id="approachesList">
+                    <div class="loading-spinner">Loading approaches...</div>
+                </div>
+            </div>
+
+            <!-- Hints Tab -->
+            <div class="tab-pane" id="hintsTab">
+                <div class="hints-container">
+                    <div class="hints-header">
+                        <h3>Need a nudge?</h3>
+                        <button id="requestHint" class="hint-btn">Get Hint</button>
+                    </div>
+                    <div class="hints-used">
+                        <span>Hints used: <span id="hintsUsed">0</span>/3</span>
+                        <div class="hint-dots">
+                            <span class="dot" id="dot1"></span>
+                            <span class="dot" id="dot2"></span>
+                            <span class="dot" id="dot3"></span>
+                        </div>
+                    </div>
+                    <div class="hints-list" id="hintsList">
+                        <!-- Hints will appear here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Tab -->
+            <div class="tab-pane" id="progressTab">
+                <!-- Smart Timer -->
+                <div class="timer-section">
+                    <h3>⏱️ Time Tracking</h3>
+                    <div class="timer-display" id="timer">00:00</div>
+                    <div class="timer-controls">
+                        <button id="startTimer" class="timer-btn">Start</button>
+                        <button id="pauseTimer" class="timer-btn">Pause</button>
+                        <button id="resetTimer" class="timer-btn">Reset</button>
+                    </div>
+                </div>
+
+                <!-- Progress Stats -->
+                <div class="stats-section">
+                    <h3>📊 Session Stats</h3>
+                    <div class="stat-item">
+                        <span>Time on problem:</span>
+                        <span id="timeOnProblem">0 min</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Hints revealed:</span>
+                        <span id="totalHints">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Approaches discussed:</span>
+                        <span id="approachesCount">0</span>
+                    </div>
+                </div>
+
+                <!-- Solutions Tab Status -->
+                <div class="solutions-status" id="solutionsStatus">
+                    <div class="status-lock">🔒 Solutions Tab Locked</div>
+                    <p>Solve the problem or discuss your approach with AI to unlock!</p>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="unlockProgress" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="status" id="connectionStatus">
+                <span class="status-dot"></span> AI Ready
+            </div>
+            <div class="version">v1.0.0</div>
+        </div>
+    </div>
+
+    <script src="sidebar.js"></script>
+</body>
+</html>
