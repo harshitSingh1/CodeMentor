@@ -150,12 +150,12 @@ chrome://extensions/
 
 This extension is built with **privacy by default**:
 
-- **No personal data** is stored on external servers by this extension
-- **API keys** are stored locally in `chrome.storage.local` and never transmitted outside of the respective AI provider's API
-- **Platform data** (problem titles, difficulty) is fetched from publicly available APIs only
+- **What stays on your device:** your timer, hint count, and chat history are stored only in `chrome.storage.local` — the extension itself never transmits this data anywhere
+- **What is sent to AI providers:** when you use the AI chat or request hints, your typed messages, the current problem title, and the page URL are forwarded to the AI provider you configured (Google Gemini or OpenAI GPT) to generate responses. This happens only on explicit user action, and a first-run consent screen explains this before any data is sent
+- **API keys** are stored locally in `chrome.storage.local` and are only sent to the respective AI provider's API endpoint
 - **AI providers** process prompts under their own data processing agreements — review [Google's Privacy Policy](https://policies.google.com/privacy) and [OpenAI's Privacy Policy](https://openai.com/policies/privacy-policy) before use
 - This extension does **not** use cookies, tracking pixels, fingerprinting, or third-party analytics
-- Users in the EU hold rights under **GDPR (Regulation (EU) 2016/679)** — including the right to access, rectification, erasure, and data portability. To exercise these rights, open a GitHub Issue.
+- Users in the EU hold rights under **GDPR (Regulation (EU) 2016/679)** — including the right to access, rectification, erasure, and data portability. A **"Clear all my data"** button is available inside the extension. For other requests, open a GitHub Issue.
 - Third-party services used in this README (readme-typing-svg, Capsule Render, Shields.io) process only publicly available repository metadata under their own privacy policies
 
 > For privacy inquiries, open a [GitHub Issue](https://github.com/harshitSingh1/CodeMentor/issues).
