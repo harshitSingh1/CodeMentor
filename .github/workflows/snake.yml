@@ -1,4 +1,4 @@
-name: Generate Snake Animation
+name: Generate Repo Snake Animation
 
 on:
   schedule:
@@ -16,16 +16,21 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: Platane/snk/svg-only@v3
+      - name: Checkout full history
+        uses: actions/checkout@v4
         with:
-          github_user_name: harshitSingh1
-          outputs: |
-            dist/github-contribution-grid-snake.svg
-            dist/github-contribution-grid-snake-dark.svg?palette=github-dark
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0   # full git log so we get all commit dates
 
-      - uses: crazy-max/ghaction-github-pages@v3.1.0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate repo-specific snake SVG
+        run: python3 .github/scripts/generate_snake.py
+
+      - name: Push SVGs to output branch
+        uses: crazy-max/ghaction-github-pages@v3.1.0
         with:
           target_branch: output
           build_dir: dist
