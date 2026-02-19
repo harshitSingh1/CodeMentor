@@ -20,7 +20,8 @@
   "host_permissions": [
     "https://leetcode.com/*",
     "https://codeforces.com/*",
-    "https://www.hackerrank.com/*"
+    "https://www.hackerrank.com/*",
+    "https://www.codechef.com/*"
   ],
 
   "background": {
@@ -33,9 +34,17 @@
         "https://leetcode.com/problems/*",
         "https://codeforces.com/problemset/problem/*",
         "https://www.hackerrank.com/challenges/*",
-        "https://www.hackerrank.com/contests/*/challenges/*"
+        "https://www.hackerrank.com/contests/*/challenges/*",
+        "https://www.codechef.com/problems/*",
+        "https://www.codechef.com/*/problems/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "platforms/leetcode.js",
+        "platforms/codeforces.js",
+        "platforms/hackerrank.js",
+        "platforms/codechef.js",
+        "content.js"
+      ],
       "css": ["styles/sidebar.css"],
       "run_at": "document_end"
     }

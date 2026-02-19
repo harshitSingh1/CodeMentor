@@ -7,6 +7,21 @@
     <link rel="stylesheet" href="styles/sidebar.css">
 </head>
 <body>
+    <!-- First-run consent overlay. Hidden after user acknowledges. -->
+    <div class="consent-overlay" id="consentOverlay">
+        <div class="consent-card">
+            <h2>Before you start</h2>
+            <p>When you use the AI chat or request hints, your messages, the current problem title, and the page URL are sent to the AI provider you configured (Google Gemini or OpenAI GPT) to generate responses.</p>
+            <p>Everything else — your timer, hint count, and chat history — stays only on your device in Chrome local storage. CodeMentor itself never receives your data.</p>
+            <p class="consent-links">
+                Review the AI providers' privacy policies:<br>
+                <a href="https://policies.google.com/privacy" target="_blank">Google Privacy Policy</a> &nbsp;·&nbsp;
+                <a href="https://openai.com/policies/privacy-policy" target="_blank">OpenAI Privacy Policy</a>
+            </p>
+            <button id="consentAccept" class="consent-btn">I understand, continue</button>
+        </div>
+    </div>
+
     <div class="codementor-container">
         <!-- Header -->
         <div class="header">
@@ -119,6 +134,13 @@
                         <span>Approaches discussed:</span>
                         <span id="approachesCount">0</span>
                     </div>
+                </div>
+
+                <!-- Data Management -->
+                <div class="data-section">
+                    <h3>🗑️ My Data</h3>
+                    <p>Clears all locally stored data: chat history, timer, hints, and settings.</p>
+                    <button id="clearData" class="clear-data-btn">Clear all my data</button>
                 </div>
 
                 <!-- Solutions Tab Status -->

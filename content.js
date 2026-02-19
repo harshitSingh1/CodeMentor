@@ -128,65 +128,58 @@ function toggleSidebar() {
 
 // Detect which platform we're on
 function detectPlatform() {
-  const url = window.location.href;
-  
-  if (url.includes('leetcode.com')) {
-    return 'leetcode';
-  } else if (url.includes('codeforces.com')) {
-    return 'codeforces';
-  } else if (url.includes('hackerrank.com')) {
-    return 'hackerrank';
-  }
-  
+  const host = window.location.hostname;
+
+  if (host === 'leetcode.com')           return 'leetcode';
+  if (host === 'codeforces.com')         return 'codeforces';
+  if (host === 'www.hackerrank.com')     return 'hackerrank';
+  if (host === 'www.codechef.com')       return 'codechef';
+
   return 'unknown';
 }
 
-// Scrape problem data based on platform
+// Scrape problem data based on platform.
+// Each platform's scraper is defined in platforms/*.js and loaded before this
+// script via the manifest. They register themselves on window.CodeMentorPlatforms.
 function scrapeProblemData(platform) {
   console.log('Scraping problem data for:', platform);
-  
-  let problemData = {
+
+  const problemData = {
     title: '',
     description: '',
+    difficulty: 'Unknown',
     examples: [],
     constraints: [],
-    platform: platform,
+    platform,
     url: window.location.href
   };
-  
+
   try {
-    if (platform === 'leetcode') {
-      // LeetCode specific scraping
-      const titleEl = document.querySelector('[data-cy="question-title"]');
-      problemData.title = titleEl ? titleEl.textContent : '';
-      
-      const descEl = document.querySelector('[data-cy="question-content"]');
-      problemData.description = descEl ? descEl.textContent : '';
-      
-    } else if (platform === 'codeforces') {
-      // Codeforces specific scraping
-      const titleEl = document.querySelector('.problem-statement .title');
-      problemData.title = titleEl ? titleEl.textContent : '';
-      
-      const descEl = document.querySelector('.problem-statement p');
-      problemData.description = descEl ? descEl.textContent : '';
+    const scraper = window.CodeMentorPlatforms?.[platform];
+    if (scraper) {
+      Object.assign(problemData, scraper.scrape());
+      problemData.difficulty = scraper.getDifficulty?.() ?? 'Unknown';
+    } else {
+      console.warn('CodeMentor: no scraper registered for platform:', platform);
     }
   } catch (error) {
-    console.error('Error scraping problem:', error);
+    console.error('CodeMentor: error scraping problem data:', error);
   }
-  
+
   return problemData;
 }
 
-// Listen for messages from background or sidebar
+// Listen for messages from the sidebar iframe.
+// We verify event.source to ensure only our own iframe can trigger actions —
+// without this check any script on the host page could send fake messages.
 window.addEventListener('message', (event) => {
-  // Security check
+  if (!sidebarIframe || event.source !== sidebarIframe.contentWindow) return;
+
   if (event.data.type === 'TOGGLE_SIDEBAR') {
     toggleSidebar();
   }
-  
+
   if (event.data.type === 'REQUEST_ANALYSIS') {
-    // Send to background for AI processing
     chrome.runtime.sendMessage({
       type: 'ANALYZE_PROBLEM',
       data: event.data.problemData

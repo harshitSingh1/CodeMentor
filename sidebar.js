@@ -20,14 +20,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Initialize sidebar components
 function initializeSidebar() {
-    // Set default platform badge
     updatePlatformBadge('unknown');
-    
-    // Load any saved data
     loadSavedData();
-    
-    // Focus on input
-    document.getElementById('userInput').focus();
+
+    // Show consent overlay on first use; hide it if already acknowledged.
+    chrome.storage.local.get('consentGiven', (result) => {
+        if (!result.consentGiven) {
+            document.getElementById('consentOverlay').style.display = 'flex';
+        } else {
+            document.getElementById('consentOverlay').style.display = 'none';
+            document.getElementById('userInput').focus();
+        }
+    });
 }
 
 // Setup all event listeners
@@ -62,13 +66,42 @@ function setupEventListeners() {
     document.getElementById('startTimer').addEventListener('click', startTimer);
     document.getElementById('pauseTimer').addEventListener('click', pauseTimer);
     document.getElementById('resetTimer').addEventListener('click', resetTimer);
+
+    // Consent overlay accept
+    document.getElementById('consentAccept').addEventListener('click', () => {
+        chrome.storage.local.set({ consentGiven: true }, () => {
+            document.getElementById('consentOverlay').style.display = 'none';
+            document.getElementById('userInput').focus();
+        });
+    });
+
+    // Clear all local data
+    document.getElementById('clearData').addEventListener('click', () => {
+        if (!confirm('This will clear all your CodeMentor data (chat history, timer, hints). Continue?')) return;
+        chrome.storage.local.clear(() => {
+            // Reset in-memory state
+            hintsUsed = 0;
+            secondsElapsed = 0;
+            chatHistory = [];
+            pauseTimer();
+            updateHintsUsed();
+            updateTimerDisplay();
+            document.getElementById('chatMessages').innerHTML = '';
+            // Show consent overlay again since consentGiven was also cleared
+            document.getElementById('consentOverlay').style.display = 'flex';
+        });
+    });
 }
 
-// Listen for messages from parent page (content.js)
+// Listen for messages from the host page (content.js via postMessage).
+// We verify that the message comes from window.parent (the tab, where content.js
+// injected the iframe) to prevent a malicious sub-frame from spoofing messages.
 function setupMessageListener() {
     window.addEventListener('message', (event) => {
+        if (event.source !== window.parent) return;
+
         console.log('Sidebar received:', event.data);
-        
+
         switch (event.data.type) {
             case 'PLATFORM_INFO':
                 handlePlatformInfo(event.data);
@@ -92,36 +125,14 @@ function handlePlatformInfo(data) {
 // Handle problem data
 function handleProblemData(data) {
     currentProblem = data;
-    
-    // Update UI with problem info
-    document.getElementById('problemTitle').textContent = data.title || 'Unknown Problem';
-    
-    // Detect difficulty (platform specific)
-    detectDifficulty();
-    
-    // Add system message about the problem
-    addAIMessage(`I see you're working on "${data.title}". What's your initial thought on how to approach this?`);
-}
 
-// Detect problem difficulty based on platform
-function detectDifficulty() {
-    let difficulty = 'Unknown';
-    
-    if (currentPlatform === 'leetcode') {
-        // Try to find difficulty on LeetCode
-        const difficultyEl = document.querySelector('[data-cy="difficulty"]');
-        if (difficultyEl) {
-            difficulty = difficultyEl.textContent;
-        }
-    } else if (currentPlatform === 'codeforces') {
-        // Codeforces difficulty detection
-        const ratingEl = document.querySelector('.problem-rating');
-        if (ratingEl) {
-            difficulty = `Rating: ${ratingEl.textContent}`;
-        }
-    }
-    
-    document.getElementById('difficulty').textContent = difficulty;
+    document.getElementById('problemTitle').textContent = data.title || 'Unknown Problem';
+
+    // Difficulty is scraped on the host page (by platforms/*.js) and passed here
+    // as data.difficulty. We cannot query the host page DOM from inside the iframe.
+    document.getElementById('difficulty').textContent = data.difficulty || 'Unknown';
+
+    addAIMessage(`I see you're working on "${data.title}". What's your initial thought on how to approach this?`);
 }
 
 // Update platform badge
@@ -134,6 +145,7 @@ function updatePlatformBadge(platform) {
         leetcode: '#f89f1b',
         codeforces: '#3182ce',
         hackerrank: '#00b551',
+        codechef: '#5b4638',
         unknown: '#64748b'
     };
     badge.style.background = colors[platform] || colors.unknown;
@@ -459,8 +471,7 @@ function loadSavedData() {
 setInterval(() => {
     chrome.storage.local.set({
         hintsUsed: hintsUsed,
-        secondsElapsed: secondsElapsed,
-        lastActive: new Date().toISOString()
+        secondsElapsed: secondsElapsed
     });
 }, 5000);
 
