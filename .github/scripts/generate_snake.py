@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Generate a repo-specific contribution snake SVG from git log.
-Produces light and dark mode variants.
+Generate a contribution snake SVG from git log.
+Snake walks every grid cell in a boustrophedon pattern.
+Cells with contributions get a synchronized "eating" animation as the snake passes.
 """
 
 import subprocess
@@ -10,12 +11,12 @@ import os
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-# ── Visual config ────────────────────────────────────────────
 WEEKS    = 52
 CELL     = 12
 GAP      = 3
 STRIDE   = CELL + GAP
 SNAKE_W  = 8
+DURATION = 8   # animation loop duration in seconds
 
 LIGHT = {
     "bg":     "#ffffff",
@@ -34,12 +35,11 @@ DARK = {
     "eye":    "#0d1117",
 }
 
-# ── Data ─────────────────────────────────────────────────────
 
 def get_commit_counts():
     result = subprocess.run(
         ["git", "log", "--all", "--format=%cd", "--date=short"],
-        capture_output=True, text=True
+        capture_output=True, text=True,
     )
     counts = defaultdict(int)
     for line in result.stdout.strip().splitlines():
@@ -50,12 +50,10 @@ def get_commit_counts():
 
 
 def build_grid(counts):
-    """Returns grid[col][row] where col=week, row=day-of-week (0=Sun)."""
     today = datetime.today().date()
-    # Rewind to last Sunday
     start = today - timedelta(weeks=WEEKS)
+    # Rewind to last Sunday
     start = start - timedelta(days=(start.weekday() + 1) % 7)
-
     grid = []
     d = start
     for w in range(WEEKS + 1):
@@ -64,7 +62,7 @@ def build_grid(counts):
             if d <= today:
                 col.append(counts.get(d.strftime("%Y-%m-%d"), 0))
             else:
-                col.append(-1)  # future
+                col.append(-1)  # future cell
             d += timedelta(days=1)
         grid.append(col)
     return grid
@@ -78,8 +76,6 @@ def level(count):
     return 4
 
 
-# ── Snake path ───────────────────────────────────────────────
-
 def cell_cx(w, day):
     return w * STRIDE + CELL // 2
 
@@ -89,12 +85,12 @@ def cell_cy(w, day):
 
 
 def snake_path_coords(grid):
-    """Boustrophedon walk; only visit cells with commits."""
+    """Boustrophedon (serpentine) walk through ALL valid (non-future) cells."""
     path = []
     for w, col in enumerate(grid):
         days = range(7) if w % 2 == 0 else range(6, -1, -1)
         for day in days:
-            if col[day] > 0:
+            if col[day] >= 0:
                 path.append((w, day))
     return path
 
@@ -107,8 +103,6 @@ def path_length(coords):
         total += math.hypot(x2 - x1, y2 - y1)
     return total
 
-
-# ── SVG helpers ──────────────────────────────────────────────
 
 def d_attr(coords):
     pts = [f"M {cell_cx(*coords[0])},{cell_cy(*coords[0])}"]
@@ -124,9 +118,12 @@ def generate_svg(grid, theme):
     H = 7 * STRIDE + 4
 
     coords = snake_path_coords(grid)
-    has_snake = len(coords) >= 2
+    N = len(coords)
+    has_snake = N >= 2
     plen = round(path_length(coords) + 20) if has_snake else 0
-    duration = max(6, round(len(coords) * 0.18, 1))
+
+    # Map (w, day) -> index in path for eat-timing
+    pos_index = {c: i for i, c in enumerate(coords)}
 
     lines = []
     a = lines.append
@@ -135,56 +132,60 @@ def generate_svg(grid, theme):
       f'xmlns="http://www.w3.org/2000/svg">')
     a(f'  <rect width="{W}" height="{H}" fill="{T["bg"]}" rx="6"/>')
 
-    # ── Grid cells
+    # Draw grid cells
     for w, col in enumerate(grid):
         for day, count in enumerate(col):
             if count < 0:
                 continue
-            x = w * STRIDE
-            y = day * STRIDE
-            color = T["levels"][level(count)]
-            a(f'  <rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" '
-              f'rx="2" fill="{color}"/>')
+            x, y = w * STRIDE, day * STRIDE
+            lv = level(count)
+            color = T["levels"][lv]
+            empty = T["empty"]
+
+            if has_snake and lv > 0 and (w, day) in pos_index:
+                idx = pos_index[(w, day)]
+                tn = round(idx / N, 4)
+                # Discrete animation: contribution color, then switch to empty when snake arrives.
+                # keyTimes must start at 0 and end at 1 for calcMode=discrete.
+                a(f'  <rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2" fill="{color}">')
+                a(f'    <animate attributeName="fill" values="{color};{empty};{empty}"'
+                  f' keyTimes="0;{tn};1" dur="{DURATION}s"'
+                  f' calcMode="discrete" repeatCount="indefinite"/>')
+                a(f'  </rect>')
+            else:
+                a(f'  <rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2" fill="{color}"/>')
 
     if has_snake:
         d = d_attr(coords)
-        hx, hy = cell_cx(*coords[0]), cell_cy(*coords[0])
 
-        # ── Snake body (animated reveal)
+        # Snake body — grows from start via stroke-dashoffset reveal
         a(f'  <path id="sp" d="{d}" fill="none" stroke="{T["snake"]}"'
-          f' stroke-width="{SNAKE_W}" stroke-linecap="round"'
-          f' stroke-linejoin="round"'
+          f' stroke-width="{SNAKE_W}" stroke-linecap="round" stroke-linejoin="round"'
           f' stroke-dasharray="{plen}" stroke-dashoffset="{plen}">')
-        a(f'    <animate attributeName="stroke-dashoffset"'
-          f' from="{plen}" to="0" dur="{duration}s"'
-          f' repeatCount="indefinite"/>')
+        a(f'    <animate attributeName="stroke-dashoffset" from="{plen}" to="0"'
+          f' dur="{DURATION}s" repeatCount="indefinite"/>')
         a(f'  </path>')
 
-        # ── Snake head (moves along path)
+        # Snake head
         a(f'  <circle r="6" fill="{T["head"]}">')
-        a(f'    <animateMotion dur="{duration}s" repeatCount="indefinite">')
-        a(f'      <mpath href="#sp"/>')
-        a(f'    </animateMotion>')
+        a(f'    <animateMotion dur="{DURATION}s" repeatCount="indefinite">'
+          f'<mpath href="#sp"/></animateMotion>')
         a(f'  </circle>')
 
-        # ── Eye (moves with head)
+        # Eye
         a(f'  <circle r="2" fill="{T["eye"]}">')
-        a(f'    <animateMotion dur="{duration}s" repeatCount="indefinite">')
-        a(f'      <mpath href="#sp"/>')
-        a(f'    </animateMotion>')
+        a(f'    <animateMotion dur="{DURATION}s" repeatCount="indefinite">'
+          f'<mpath href="#sp"/></animateMotion>')
         a(f'  </circle>')
 
     a('</svg>')
     return "\n".join(lines)
 
 
-# ── Main ─────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     os.makedirs("dist", exist_ok=True)
     counts = get_commit_counts()
-    grid   = build_grid(counts)
-
+    grid = build_grid(counts)
     total = sum(c for col in grid for c in col if c > 0)
     print(f"Commits in last 52 weeks: {total}")
 
