@@ -679,6 +679,37 @@ body {
     background: #fecaca;
 }
 
+.clear-data-btn--armed {
+    background: #fecaca;
+    border-color: #dc2626;
+    color: #dc2626;
+    font-weight: 600;
+}
+
+/* Typing indicator animation */
+@keyframes dot-blink {
+    0%, 20%  { opacity: 0; }
+    50%      { opacity: 1; }
+    80%, 100%{ opacity: 0; }
+}
+
+.dot-animation {
+    display: inline-block;
+}
+
+.dot-animation::after {
+    content: '...';
+    display: inline-block;
+    animation: dot-blink 1.4s infinite;
+    letter-spacing: 2px;
+}
+
+/* Footer version text */
+.version {
+    font-size: 11px;
+    color: #94a3b8;
+}
+
 /* Scrollbar Styling */
 ::-webkit-scrollbar {
     width: 6px;

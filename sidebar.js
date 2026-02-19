@@ -75,11 +75,32 @@ function setupEventListeners() {
         });
     });
 
-    // Clear all local data
-    document.getElementById('clearData').addEventListener('click', () => {
-        if (!confirm('This will clear all your CodeMentor data (chat history, timer, hints). Continue?')) return;
+    // Clear all local data.
+    // confirm() is blocked in cross-origin iframes (Chrome v92+), so we use a
+    // two-tap pattern: first click arms the button, second click executes.
+    const clearBtn = document.getElementById('clearData');
+    let clearArmed = false;
+    let clearArmTimer = null;
+
+    clearBtn.addEventListener('click', () => {
+        if (!clearArmed) {
+            clearArmed = true;
+            clearBtn.textContent = 'Tap again to confirm';
+            clearBtn.classList.add('clear-data-btn--armed');
+            clearArmTimer = setTimeout(() => {
+                clearArmed = false;
+                clearBtn.textContent = 'Clear all my data';
+                clearBtn.classList.remove('clear-data-btn--armed');
+            }, 3000);
+            return;
+        }
+
+        clearTimeout(clearArmTimer);
+        clearArmed = false;
+        clearBtn.textContent = 'Clear all my data';
+        clearBtn.classList.remove('clear-data-btn--armed');
+
         chrome.storage.local.clear(() => {
-            // Reset in-memory state
             hintsUsed = 0;
             secondsElapsed = 0;
             chatHistory = [];
@@ -87,7 +108,6 @@ function setupEventListeners() {
             updateHintsUsed();
             updateTimerDisplay();
             document.getElementById('chatMessages').innerHTML = '';
-            // Show consent overlay again since consentGiven was also cleared
             document.getElementById('consentOverlay').style.display = 'flex';
         });
     });
@@ -185,21 +205,29 @@ function displayApproaches(approaches) {
         return;
     }
     
+    // All values from the AI response are escaped before being inserted as HTML
+    // to prevent XSS if the AI returns unexpected content.
     let html = '';
     approaches.forEach((approach, index) => {
+        const name           = escapeHtml(approach.name           || 'Solution');
+        const timeComplexity = escapeHtml(approach.timeComplexity || 'N/A');
+        const spaceComplexity= escapeHtml(approach.spaceComplexity|| 'N/A');
+        const description    = escapeHtml(approach.description    || '');
+        const source         = approach.source ? escapeHtml(approach.source) : '';
+
         html += `
             <div class="approach-card">
-                <h4>Approach ${index + 1}: ${approach.name || 'Solution'}</h4>
+                <h4>Approach ${index + 1}: ${name}</h4>
                 <div class="complexity">
-                    <span class="time">⏱️ Time: ${approach.timeComplexity || 'N/A'}</span>
-                    <span class="space">💾 Space: ${approach.spaceComplexity || 'N/A'}</span>
+                    <span class="time">⏱️ Time: ${timeComplexity}</span>
+                    <span class="space">💾 Space: ${spaceComplexity}</span>
                 </div>
-                <p class="description">${approach.description || ''}</p>
-                ${approach.source ? `<span class="source-badge">📚 Source: ${approach.source}</span>` : ''}
+                <p class="description">${description}</p>
+                ${source ? `<span class="source-badge">📚 Source: ${source}</span>` : ''}
             </div>
         `;
     });
-    
+
     approachesList.innerHTML = html;
     document.getElementById('approachesCount').textContent = approaches.length;
 }
