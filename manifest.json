@@ -43,6 +43,8 @@
         "platforms/codeforces.js",
         "platforms/hackerrank.js",
         "platforms/codechef.js",
+        "platforms/loader.js",
+        "utils/storage.js",
         "content.js"
       ],
       "css": ["styles/sidebar.css"],
@@ -52,7 +54,12 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["sidebar.html", "assets/*"],
+      "resources": [
+        "sidebar.html",
+        "sidebar.js",
+        "assets/*",
+        "styles/*"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
