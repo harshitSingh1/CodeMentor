@@ -1,0 +1,25 @@
+{
+  "name": "codementor",
+  "version": "1.0.0",
+  "description": "<div align=\"center\">",
+  "main": "background.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/harshitSingh1/CodeMentor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/harshitSingh1/CodeMentor/issues"
+  },
+  "homepage": "https://github.com/harshitSingh1/CodeMentor#readme",
+  "devDependencies": {
+    "jsdom": "^28.1.0",
+    "puppeteer-core": "^24.37.5"
+  }
+}
