@@ -10,7 +10,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.action.onClicked.addListener((tab) => {
-  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR' });
+  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR' }, () => {
+    // suppress "Receiving end does not exist" when content script isn't injected yet
+    void chrome.runtime.lastError;
+  });
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

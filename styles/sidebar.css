@@ -214,7 +214,7 @@ html, body {
 .cm-setting-row:last-child { border-bottom: none; }
 
 /* ── Chat pane ─────────────────────────────────────────────────────────────── */
-#pane-chat { padding: 0; display: flex; flex-direction: column; }
+#pane-chat { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
 
 .cm-nudge {
   display: flex; align-items: flex-start; gap: 8px;

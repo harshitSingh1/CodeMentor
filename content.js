@@ -36,6 +36,8 @@ function injectSidebar() {
   toggleBtn = buildToggleButton();
   document.body.appendChild(toggleBtn);
 
+  // allow clipboard-write so navigator.clipboard.writeText() works inside the iframe
+  sidebarIframe.allow = 'clipboard-write';
   sidebarIframe.addEventListener('load', sendPlatformAndProblem, { once: true });
 }
 

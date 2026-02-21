@@ -16,6 +16,19 @@ let storedApproaches = [];
 let stuckNudgeShown = false;
 let settings = { stuckEnabled: true, stuckThreshold: 15, mistakeRadarEnabled: true };
 
+// Wraps chrome.runtime.sendMessage with lastError handling.
+// Prevents "Unchecked runtime.lastError" warnings and handles service-worker restarts.
+function sendMsg(msg, cb) {
+  chrome.runtime.sendMessage(msg, (resp) => {
+    if (chrome.runtime.lastError) {
+      console.warn('[CodeMentor]', chrome.runtime.lastError.message);
+      cb({ success: false, error: 'Extension disconnected — reload the page.' });
+      return;
+    }
+    cb(resp || {});
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initSidebar();
@@ -118,7 +131,7 @@ function sendMessage() {
 
   if (settings.mistakeRadarEnabled) runMistakeRadar(text);
 
-  chrome.runtime.sendMessage({
+  sendMsg({
     type: 'USER_QUERY',
     query: text,
     problemData: currentProblem,
@@ -146,7 +159,7 @@ function sendMessage() {
 }
 
 function runMistakeRadar(text) {
-  chrome.runtime.sendMessage({ type: 'MISTAKE_RADAR', userText: text, platform: currentPlatform }, (resp) => {
+  sendMsg({ type: 'MISTAKE_RADAR', userText: text, platform: currentPlatform }, (resp) => {
     if (resp?.pitfalls?.length) {
       const chips = document.getElementById('radarChips');
       chips.innerHTML = resp.pitfalls.map(p => `<span class="cm-chip">${esc(p)}</span>`).join('');
@@ -165,7 +178,7 @@ function explainSelectedCode() {
   sendBtn.disabled = true;
   showTyping();
 
-  chrome.runtime.sendMessage({ type: 'EXPLAIN_LINES', code }, (resp) => {
+  sendMsg({ type: 'EXPLAIN_LINES', code }, (resp) => {
     hideTyping();
     sendBtn.disabled = false;
     addAIMsg(resp?.success ? resp.explanation : (resp?.error || 'Could not explain this snippet.'));
@@ -199,17 +212,21 @@ function revealNextHint() {
 
   document.getElementById('nextHintBtn').disabled = true;
 
-  chrome.runtime.sendMessage({ type: 'HINT_LADDER', level, problemData: currentProblem }, (resp) => {
+  sendMsg({ type: 'HINT_LADDER', level, problemData: currentProblem }, (resp) => {
     const el = document.getElementById(`rung-content-${level}`);
     if (resp?.success && resp.hint) {
       hintContents[level] = resp.hint;
       hintsUsed++;
       if (el) { el.classList.remove('cm-skeleton'); el.style.height = ''; el.textContent = resp.hint; }
       rung.querySelector('.cm-rung__status').textContent = 'Revealed';
-      rung.classList.replace('cm-rung--active', 'cm-rung--unlocked');
+      rung.classList.remove('cm-rung--active');
+      rung.classList.add('cm-rung--unlocked');
     } else {
-      if (el) el.textContent = resp?.error === 'NO_API_KEY' ? '⚠️ API key required.' : 'Could not load hint.';
-      rung.querySelector('.cm-rung__status').textContent = 'Error';
+      // Reset rung to locked so a retry attempt is clean (no duplicate IDs)
+      el?.remove();
+      rung.className = 'cm-rung cm-rung--locked';
+      rung.querySelector('.cm-rung__status').textContent = 'Locked';
+      toast(resp?.error === 'NO_API_KEY' ? 'API key required — go to Settings' : 'Could not load hint, try again', 'error');
     }
     document.getElementById('hintsUsed').textContent = hintsUsed;
     setStat('statHints', hintsUsed);
@@ -239,10 +256,23 @@ function setupProgress() {
     } else {
       clearTimeout(armTimer);
       chrome.storage.local.clear(() => {
+        // Reset all in-memory state
         hintsUsed = 0; secondsElapsed = 0; chatHistory = [];
         storedApproaches = []; hintContents = {};
-        pauseTimer(); resetHintRungs(); updateTimerDisplay();
+        currentProblem = null; currentPlatform = 'unknown';
+        stuckNudgeShown = false;
+        settings = { stuckEnabled: true, stuckThreshold: 15, mistakeRadarEnabled: true };
+
+        pauseTimer(); resetHintRungs(); updateTimerDisplay(); applySettings();
         document.getElementById('chatMessages').innerHTML = '';
+        document.getElementById('problemTitle').textContent = 'Detecting problem…';
+        document.getElementById('difficulty').textContent = '';
+        document.getElementById('mistakeRadar').style.display = 'none';
+        document.getElementById('stuckNudge').style.display = 'none';
+        document.getElementById('approachComparatorCard').style.display = 'none';
+        updatePlatformBadge('unknown');
+        setDot('statusApi', 'off'); setDot('statusParse', 'off'); setDot('statusTimer', 'off');
+
         showEl('consentOverlay');
         armed = false; clearBtn.textContent = 'Clear all my data'; clearBtn.style.background = '';
       });
@@ -281,7 +311,7 @@ function checkStuck() {
   const threshold = (settings.stuckThreshold || 15) * 60;
   if (secondsElapsed < threshold) return;
   stuckNudgeShown = true;
-  chrome.runtime.sendMessage({
+  sendMsg({
     type: 'STUCK_NUDGE', minutes: Math.floor(secondsElapsed / 60), problemData: currentProblem
   }, (resp) => {
     const el = document.getElementById('nudgeText');
@@ -293,7 +323,7 @@ function checkStuck() {
 function copySession() {
   const btn = document.getElementById('copySessionBtn');
   btn.disabled = true; btn.textContent = 'Generating…';
-  chrome.runtime.sendMessage({
+  sendMsg({
     type: 'SESSION_SUMMARY',
     problem: currentProblem, chatHistory, hintsRevealed: hintsUsed,
     approaches: storedApproaches, timeElapsed: secondsElapsed
@@ -383,7 +413,7 @@ function onProblemData(data) {
 
   const parsed = !!(data.title || data.description);
   setDot('statusParse', parsed ? 'on' : 'off');
-  setDiag('diagPageType', data.url?.includes('/problems/') ? 'problem' : 'other');
+  setDiag('diagPageType', /\/(problems?|challenges?|contest[^/]*\/problem)\//i.test(data.url || '') ? 'problem' : 'other');
   setDiag('diagTitleLen', `${(data.title || '').length} chars`);
   setDiag('diagStmtLen', `${(data.fullProblemText || data.description || '').length} chars`);
   setDiag('diagTimestamp', new Date().toLocaleTimeString());
@@ -398,6 +428,8 @@ function onProblemData(data) {
         hintContents = saved.hintContents || {};
         updateTimerDisplay();
         document.getElementById('hintsUsed').textContent = hintsUsed;
+        setStat('statHints', hintsUsed);
+        setStat('statTime', `${Math.floor(secondsElapsed / 60)} min`);
         for (let i = 1; i <= hintsUsed; i++) restoreRung(i, hintContents[i] || '');
         const btn = document.getElementById('nextHintBtn');
         btn.disabled = hintsUsed >= 4;
