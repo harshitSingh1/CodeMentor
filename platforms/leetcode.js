@@ -1,34 +1,38 @@
 // platforms/leetcode.js
-// Scraper for LeetCode problem pages.
-// Defines window.CodeMentorPlatforms.leetcode so content.js can call it.
-
 window.CodeMentorPlatforms = window.CodeMentorPlatforms || {};
 
 window.CodeMentorPlatforms.leetcode = {
   scrape() {
-    // LeetCode renders its UI in React, so selectors target data-cy attributes
-    // which are more stable than generated class names.
-    const title = (
+    // LeetCode uses React with data-cy attributes (more stable than generated classes)
+    const titleEl =
       document.querySelector('[data-cy="question-title"]') ||
-      document.querySelector('.text-title-large')
-    )?.textContent?.trim() || '';
+      document.querySelector('.text-title-large a') ||
+      document.querySelector('.text-title-large');
+    const title = titleEl?.textContent?.trim() || '';
 
-    const description = (
+    const descEl =
       document.querySelector('[data-cy="question-content"]') ||
-      document.querySelector('.elfjS')
-    )?.textContent?.trim() || '';
+      document.querySelector('.elfjS') ||
+      document.querySelector('.xFUwe');
+    const description = descEl?.textContent?.trim() || '';
 
     return { title, description };
   },
 
   getDifficulty() {
-    // LeetCode shows difficulty as a coloured label next to the title.
-    const el = (
-      document.querySelector('[data-cy="question-title"] ~ div') ||
+    // Try explicit difficulty classes first
+    const explicit =
       document.querySelector('.text-difficulty-easy') ||
       document.querySelector('.text-difficulty-medium') ||
-      document.querySelector('.text-difficulty-hard')
-    );
-    return el?.textContent?.trim() || 'Unknown';
+      document.querySelector('.text-difficulty-hard');
+    if (explicit) return explicit.textContent.trim();
+
+    // Fallback: scan for standalone Easy/Medium/Hard text nodes near the title area
+    const candidates = document.querySelectorAll('[class*="title"] ~ * span, [class*="Difficulty"] span');
+    for (const el of candidates) {
+      const t = el.textContent.trim();
+      if (['Easy', 'Medium', 'Hard'].includes(t)) return t;
+    }
+    return 'Unknown';
   }
 };

@@ -1,168 +1,275 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeMentor AI</title>
-    <link rel="stylesheet" href="styles/sidebar.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeMentor AI</title>
+  <link rel="stylesheet" href="styles/sidebar.css">
 </head>
 <body>
-    <!-- First-run consent overlay. Hidden after user acknowledges. -->
-    <div class="consent-overlay" id="consentOverlay">
-        <div class="consent-card">
-            <h2>Before you start</h2>
-            <p>When you use the AI chat or request hints, your messages, the current problem title, and the page URL are sent to the AI provider you configured (Google Gemini or OpenAI GPT) to generate responses.</p>
-            <p>Everything else — your timer, hint count, and chat history — stays only on your device in Chrome local storage. CodeMentor itself never receives your data.</p>
-            <p class="consent-links">
-                Review the AI providers' privacy policies:<br>
-                <a href="https://policies.google.com/privacy" target="_blank">Google Privacy Policy</a> &nbsp;·&nbsp;
-                <a href="https://openai.com/policies/privacy-policy" target="_blank">OpenAI Privacy Policy</a>
-            </p>
-            <button id="consentAccept" class="consent-btn">I understand, continue</button>
+
+<!-- Consent overlay -->
+<div class="cm-overlay" id="consentOverlay">
+  <div class="cm-consent-card">
+    <div class="cm-consent-logo">
+      <img src="assets/logo-48.png" alt="CodeMentor">
+      <span>CodeMentor AI</span>
+    </div>
+    <h2>Before you start</h2>
+    <p>When you use AI features, the problem statement and your messages are sent to the configured AI provider (Google Gemini). Everything else stays on your device.</p>
+    <a href="https://policies.google.com/privacy" target="_blank" class="cm-link">Google Privacy Policy ↗</a>
+    <button id="consentAccept" class="cm-btn cm-btn--primary cm-btn--full">I understand, continue</button>
+  </div>
+</div>
+
+<!-- API Key setup overlay -->
+<div class="cm-overlay" id="apiKeyOverlay" style="display:none">
+  <div class="cm-consent-card">
+    <div class="cm-consent-logo">
+      <img src="assets/logo-48.png" alt="CodeMentor">
+      <span>CodeMentor AI</span>
+    </div>
+    <h2>API Key Required</h2>
+    <p>Enter your Google Gemini API key to enable AI features. The key is stored locally and never sent anywhere except Google's API.</p>
+    <input type="password" id="overlayApiKeyInput" class="cm-input" placeholder="AIza…">
+    <div class="cm-toast cm-toast--error" id="overlayApiKeyError" style="display:none">Invalid or empty key</div>
+    <button id="overlayApiKeySave" class="cm-btn cm-btn--primary cm-btn--full" style="margin-top:12px">Save &amp; Continue</button>
+    <button id="overlayApiKeySkip" class="cm-btn cm-btn--ghost cm-btn--full" style="margin-top:8px">Skip (limited mode)</button>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer" class="cm-toast-container"></div>
+
+<!-- Main sidebar -->
+<div class="cm-sidebar">
+
+  <!-- Header -->
+  <header class="cm-header">
+    <div class="cm-header__left">
+      <img src="assets/logo-32.png" alt="CM" class="cm-header__logo">
+      <span class="cm-header__title">CodeMentor</span>
+      <span class="cm-badge" id="platformBadge">—</span>
+    </div>
+    <button class="cm-icon-btn" id="closeSidebar" title="Close">✕</button>
+  </header>
+
+  <!-- Status strip -->
+  <div class="cm-status-strip" id="statusStrip">
+    <span class="cm-status-item" id="statusApi">
+      <span class="cm-dot cm-dot--off"></span>API
+    </span>
+    <span class="cm-status-sep">·</span>
+    <span class="cm-status-item" id="statusParse">
+      <span class="cm-dot cm-dot--off"></span>Parse
+    </span>
+    <span class="cm-status-sep">·</span>
+    <span class="cm-status-item" id="statusTimer">
+      <span class="cm-dot cm-dot--off"></span><span id="statusTimerText">0:00</span>
+    </span>
+  </div>
+
+  <!-- Problem info -->
+  <div class="cm-problem" id="problemSection">
+    <div class="cm-problem__title" id="problemTitle">Detecting problem…</div>
+    <div class="cm-problem__meta">
+      <span class="cm-difficulty" id="difficulty"></span>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <nav class="cm-tabs" id="tabNav">
+    <button class="cm-tab cm-tab--active" data-tab="chat">Chat</button>
+    <button class="cm-tab" data-tab="hints">Hints</button>
+    <button class="cm-tab" data-tab="progress">Progress</button>
+    <button class="cm-tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <!-- Tab content -->
+  <div class="cm-tab-content">
+
+    <!-- CHAT TAB -->
+    <div class="cm-pane cm-pane--active" id="pane-chat">
+
+      <!-- Stuck detector nudge -->
+      <div class="cm-nudge" id="stuckNudge" style="display:none">
+        <span class="cm-nudge__icon">💡</span>
+        <div class="cm-nudge__body">
+          <div class="cm-nudge__title">Still stuck?</div>
+          <div class="cm-nudge__text" id="nudgeText">Check edge cases and constraints.</div>
         </div>
+        <button class="cm-icon-btn cm-nudge__close" id="nudgeClose">✕</button>
+      </div>
+
+      <!-- Mistake radar chips -->
+      <div class="cm-radar" id="mistakeRadar" style="display:none">
+        <div class="cm-radar__label">Likely pitfalls:</div>
+        <div class="cm-radar__chips" id="radarChips"></div>
+      </div>
+
+      <div class="cm-chat-messages" id="chatMessages">
+        <div class="cm-msg cm-msg--ai">
+          <div class="cm-msg__avatar">🎯</div>
+          <div class="cm-msg__bubble">
+            Hi! I'm CodeMentor. What's your approach to this problem? I'll guide you without spoiling the answer.
+          </div>
+        </div>
+      </div>
+
+      <!-- Explain this line bar -->
+      <div class="cm-explain-bar" id="explainBar" style="display:none">
+        <span class="cm-explain-bar__label">Code snippet detected</span>
+        <button class="cm-btn cm-btn--xs cm-btn--accent" id="explainLinesBtn">Explain line-by-line</button>
+        <button class="cm-icon-btn" id="explainBarClose">✕</button>
+      </div>
+
+      <div class="cm-chat-input">
+        <textarea id="userInput" class="cm-textarea" rows="2" placeholder="Ask me anything…"></textarea>
+        <button id="sendMessage" class="cm-btn cm-btn--primary">Send</button>
+      </div>
     </div>
 
-    <div class="codementor-container">
-        <!-- Header -->
-        <div class="header">
-            <div class="logo-section">
-                <img src="assets/logo-32.png" alt="CodeMentor AI" class="logo">
-                <h1>CodeMentor AI</h1>
-            </div>
-            <button class="close-btn" id="closeSidebar">✕</button>
+    <!-- HINTS TAB -->
+    <div class="cm-pane" id="pane-hints">
+      <div class="cm-hints">
+        <div class="cm-hints__header">
+          <div>
+            <div class="cm-hints__title">Hint Ladder</div>
+            <div class="cm-hints__sub">Progressive reveals — no full solution</div>
+          </div>
+          <label class="cm-toggle-label" title="Lock to prevent further reveals">
+            <input type="checkbox" id="hintLockToggle"> Lock
+          </label>
         </div>
 
-        <!-- Problem Info Section -->
-        <div class="problem-section" id="problemSection">
-            <div class="problem-header">
-                <h2 id="problemTitle">Loading problem...</h2>
-                <span class="platform-badge" id="platformBadge">LeetCode</span>
+        <div class="cm-hint-rungs" id="hintRungs">
+          <div class="cm-rung cm-rung--locked" id="rung-1">
+            <div class="cm-rung__header">
+              <span class="cm-rung__num">1</span>
+              <span class="cm-rung__label">Intuition</span>
+              <span class="cm-rung__status">Locked</span>
             </div>
-            <div class="difficulty" id="difficulty">Loading difficulty...</div>
+          </div>
+          <div class="cm-rung cm-rung--locked" id="rung-2">
+            <div class="cm-rung__header">
+              <span class="cm-rung__num">2</span>
+              <span class="cm-rung__label">Approach Outline</span>
+              <span class="cm-rung__status">Locked</span>
+            </div>
+          </div>
+          <div class="cm-rung cm-rung--locked" id="rung-3">
+            <div class="cm-rung__header">
+              <span class="cm-rung__num">3</span>
+              <span class="cm-rung__label">Key Observation</span>
+              <span class="cm-rung__status">Locked</span>
+            </div>
+          </div>
+          <div class="cm-rung cm-rung--locked" id="rung-4">
+            <div class="cm-rung__header">
+              <span class="cm-rung__num">4</span>
+              <span class="cm-rung__label">Pseudo-code</span>
+              <span class="cm-rung__status">Locked</span>
+            </div>
+          </div>
         </div>
 
-        <!-- Tabs Navigation -->
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="mentor">AI Mentor</button>
-            <button class="tab-btn" data-tab="approaches">Approaches</button>
-            <button class="tab-btn" data-tab="hints">Hints</button>
-            <button class="tab-btn" data-tab="progress">Progress</button>
-        </div>
-
-        <!-- Tab Content -->
-        <div class="tab-content">
-            <!-- AI Mentor Tab (Chat) -->
-            <div class="tab-pane active" id="mentorTab">
-                <div class="chat-messages" id="chatMessages">
-                    <div class="message ai-message">
-                        <div class="avatar">🤖</div>
-                        <div class="message-content">
-                            <p>Hi! I'm your AI mentor. I see you're working on this problem. What's your thought process? Share your approach and I'll guide you without spoiling the solution.</p>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Intuition Box -->
-                <div class="intuition-box" id="intuitionBox" style="display: none;">
-                    <h3>💡 Problem Intuition</h3>
-                    <p id="intuitionText"></p>
-                </div>
-
-                <div class="chat-input-area">
-                    <textarea 
-                        id="userInput" 
-                        placeholder="Ask me anything about this problem..."
-                        rows="2"
-                    ></textarea>
-                    <button id="sendMessage" class="send-btn">Send</button>
-                </div>
-            </div>
-
-            <!-- Approaches Tab -->
-            <div class="tab-pane" id="approachesTab">
-                <div class="approaches-list" id="approachesList">
-                    <div class="loading-spinner">Loading approaches...</div>
-                </div>
-            </div>
-
-            <!-- Hints Tab -->
-            <div class="tab-pane" id="hintsTab">
-                <div class="hints-container">
-                    <div class="hints-header">
-                        <h3>Need a nudge?</h3>
-                        <button id="requestHint" class="hint-btn">Get Hint</button>
-                    </div>
-                    <div class="hints-used">
-                        <span>Hints used: <span id="hintsUsed">0</span>/3</span>
-                        <div class="hint-dots">
-                            <span class="dot" id="dot1"></span>
-                            <span class="dot" id="dot2"></span>
-                            <span class="dot" id="dot3"></span>
-                        </div>
-                    </div>
-                    <div class="hints-list" id="hintsList">
-                        <!-- Hints will appear here -->
-                    </div>
-                </div>
-            </div>
-
-            <!-- Progress Tab -->
-            <div class="tab-pane" id="progressTab">
-                <!-- Smart Timer -->
-                <div class="timer-section">
-                    <h3>⏱️ Time Tracking</h3>
-                    <div class="timer-display" id="timer">00:00</div>
-                    <div class="timer-controls">
-                        <button id="startTimer" class="timer-btn">Start</button>
-                        <button id="pauseTimer" class="timer-btn">Pause</button>
-                        <button id="resetTimer" class="timer-btn">Reset</button>
-                    </div>
-                </div>
-
-                <!-- Progress Stats -->
-                <div class="stats-section">
-                    <h3>📊 Session Stats</h3>
-                    <div class="stat-item">
-                        <span>Time on problem:</span>
-                        <span id="timeOnProblem">0 min</span>
-                    </div>
-                    <div class="stat-item">
-                        <span>Hints revealed:</span>
-                        <span id="totalHints">0</span>
-                    </div>
-                    <div class="stat-item">
-                        <span>Approaches discussed:</span>
-                        <span id="approachesCount">0</span>
-                    </div>
-                </div>
-
-                <!-- Data Management -->
-                <div class="data-section">
-                    <h3>🗑️ My Data</h3>
-                    <p>Clears all locally stored data: chat history, timer, hints, and settings.</p>
-                    <button id="clearData" class="clear-data-btn">Clear all my data</button>
-                </div>
-
-                <!-- Solutions Tab Status -->
-                <div class="solutions-status" id="solutionsStatus">
-                    <div class="status-lock">🔒 Solutions Tab Locked</div>
-                    <p>Solve the problem or discuss your approach with AI to unlock!</p>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="unlockProgress" style="width: 0%"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="footer">
-            <div class="status" id="connectionStatus">
-                <span class="status-dot"></span> AI Ready
-            </div>
-            <div class="version">v1.0.0</div>
-        </div>
+        <button class="cm-btn cm-btn--primary cm-btn--full" id="nextHintBtn">Next Hint →</button>
+        <div class="cm-hints__count"><span id="hintsUsed">0</span> of 4 revealed</div>
+      </div>
     </div>
 
-    <script src="sidebar.js"></script>
+    <!-- PROGRESS TAB -->
+    <div class="cm-pane" id="pane-progress">
+
+      <div class="cm-card">
+        <div class="cm-card__label">Session Timer</div>
+        <div class="cm-timer" id="timer">00:00</div>
+        <div class="cm-timer-controls">
+          <button class="cm-btn cm-btn--sm cm-btn--success" id="startTimer">Start</button>
+          <button class="cm-btn cm-btn--sm cm-btn--warn" id="pauseTimer">Pause</button>
+          <button class="cm-btn cm-btn--sm cm-btn--danger" id="resetTimer">Reset</button>
+        </div>
+      </div>
+
+      <div class="cm-card">
+        <div class="cm-card__label">Session Stats</div>
+        <div class="cm-stat-row"><span>Time</span><span id="statTime">0 min</span></div>
+        <div class="cm-stat-row"><span>Hints revealed</span><span id="statHints">0</span></div>
+        <div class="cm-stat-row"><span>Messages sent</span><span id="statMessages">0</span></div>
+        <div class="cm-stat-row"><span>Approaches</span><span id="statApproaches">0</span></div>
+      </div>
+
+      <div class="cm-card" id="approachComparatorCard" style="display:none">
+        <div class="cm-card__label">Approach Comparator</div>
+        <div class="cm-comparator" id="comparatorTable"></div>
+      </div>
+
+      <div class="cm-card">
+        <div class="cm-card__label">Session Replay</div>
+        <p class="cm-card__text">Export a markdown summary: problem, approaches, insights, pitfalls, next steps.</p>
+        <button class="cm-btn cm-btn--accent cm-btn--full" id="copySessionBtn">Copy Session Summary</button>
+      </div>
+
+      <div class="cm-card">
+        <div class="cm-card__label">My Data</div>
+        <p class="cm-card__text">Clears all local data: chat, timer, hints, settings.</p>
+        <button class="cm-btn cm-btn--danger cm-btn--full" id="clearData">Clear all my data</button>
+      </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div class="cm-pane" id="pane-settings">
+
+      <div class="cm-card">
+        <div class="cm-card__label">Gemini API Key</div>
+        <p class="cm-card__text">Stored locally only — never shared with CodeMentor servers.</p>
+        <div class="cm-api-key-row">
+          <input type="password" id="apiKeyInput" class="cm-input" placeholder="AIza…">
+          <button class="cm-btn cm-btn--primary" id="saveApiKey">Save</button>
+        </div>
+      </div>
+
+      <div class="cm-card">
+        <div class="cm-card__label">Stuck Detector</div>
+        <div class="cm-setting-row">
+          <label>Enable stuck detector</label>
+          <label class="cm-switch">
+            <input type="checkbox" id="stuckEnabled" checked>
+            <span class="cm-switch__track"></span>
+          </label>
+        </div>
+        <div class="cm-setting-row">
+          <label>Nudge after (minutes)</label>
+          <input type="number" id="stuckThreshold" class="cm-input cm-input--sm" value="15" min="5" max="60">
+        </div>
+      </div>
+
+      <div class="cm-card">
+        <div class="cm-card__label">Preferences</div>
+        <div class="cm-setting-row">
+          <label>Mistake radar</label>
+          <label class="cm-switch">
+            <input type="checkbox" id="mistakeRadarEnabled" checked>
+            <span class="cm-switch__track"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Diagnostics -->
+      <div class="cm-card cm-card--diag">
+        <div class="cm-card__label">Diagnostics</div>
+        <div class="cm-diag-row"><span>Platform</span><span id="diagPlatform">—</span></div>
+        <div class="cm-diag-row"><span>Page type</span><span id="diagPageType">—</span></div>
+        <div class="cm-diag-row"><span>Title length</span><span id="diagTitleLen">—</span></div>
+        <div class="cm-diag-row"><span>Statement length</span><span id="diagStmtLen">—</span></div>
+        <div class="cm-diag-row"><span>Last extracted</span><span id="diagTimestamp">—</span></div>
+        <div class="cm-diag-row"><span>Last error</span><span id="diagError" class="cm-diag-error">—</span></div>
+      </div>
+    </div>
+
+  </div><!-- /.cm-tab-content -->
+</div><!-- /.cm-sidebar -->
+
+<script src="sidebar.js"></script>
 </body>
 </html>
