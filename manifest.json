@@ -11,7 +11,7 @@
     "128": "assets/logo-128.png"
   },
 
-  "permissions": ["storage", "scripting", "activeTab", "clipboardWrite"],
+  "permissions": ["storage", "activeTab", "clipboardWrite"],
 
   "host_permissions": [
     "https://leetcode.com/*",
@@ -27,14 +27,10 @@
   "content_scripts": [
     {
       "matches": [
-        "https://leetcode.com/problems/*",
-        "https://codeforces.com/problemset/problem/*/*",
-        "https://codeforces.com/contest/*/problem/*",
-        "https://codeforces.com/gym/*/problem/*",
-        "https://www.hackerrank.com/challenges/*",
-        "https://www.hackerrank.com/contests/*/challenges/*",
-        "https://www.codechef.com/problems/*",
-        "https://www.codechef.com/*/problems/*"
+        "https://leetcode.com/*",
+        "https://codeforces.com/*",
+        "https://www.hackerrank.com/*",
+        "https://www.codechef.com/*"
       ],
       "js": [
         "platforms/leetcode.js",
@@ -51,7 +47,12 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["sidebar.html", "sidebar.js", "assets/*", "styles/*"],
+      "resources": [
+        "sidebar.html",
+        "sidebar.js",
+        "assets/*",
+        "styles/*"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
