@@ -36,6 +36,7 @@ let timerInterval = null;
 let secondsElapsed = 0;
 let isTimerRunning = false;
 let chatHistory = [];
+let storedApproaches = [];
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', () => {
@@ -171,15 +172,50 @@ function handlePlatformInfo(data) {
 
 // Handle problem data
 function handleProblemData(data) {
+    const newProblemId = data.url;
+    const approachKey = `approaches_${newProblemId}`;
+chrome.storage.local.get(approachKey, (res) => {
+    if (res[approachKey]) {
+        storedApproaches = res[approachKey];
+        displayApproaches(storedApproaches);
+    }
+});
+
+    // Reset hints & timer if problem changed
+    if (!currentProblem || currentProblem.url !== newProblemId) {
+        hintsUsed = 0;
+        secondsElapsed = 0;
+        chatHistory = [];
+        pauseTimer();
+        updateHintsUsed();
+        updateTimerDisplay();
+        document.getElementById('hintsList').innerHTML = '';
+        document.getElementById('chatMessages').innerHTML = '';
+    }
+
+    const key = `progress_${newProblemId}`;
+chrome.storage.local.get(key, (res) => {
+    const saved = res[key];
+    if (!saved) return;
+
+    hintsUsed = saved.hintsUsed || 0;
+    secondsElapsed = saved.secondsElapsed || 0;
+
+    updateHintsUsed();
+    updateTimerDisplay();
+});
+
     currentProblem = data;
 
-    document.getElementById('problemTitle').textContent = data.title || 'Unknown Problem';
+    document.getElementById('problemTitle').textContent =
+        data.title || 'Unknown Problem';
 
-    // Difficulty is scraped on the host page (by platforms/*.js) and passed here
-    // as data.difficulty. We cannot query the host page DOM from inside the iframe.
-    document.getElementById('difficulty').textContent = data.difficulty || 'Unknown';
+    document.getElementById('difficulty').textContent =
+        data.difficulty || 'Unknown';
 
-    addAIMessage(`I see you're working on "${data.title}". What's your initial thought on how to approach this?`);
+    addAIMessage(
+        `I see you're working on "${data.title}". Tell me your approach — I'll guide you step-by-step without spoiling.`
+    );
 }
 
 // Update platform badge
@@ -225,37 +261,57 @@ function handleAnalysisResult(data) {
 
 // Display approaches in Approaches tab
 function displayApproaches(approaches) {
-    const approachesList = document.getElementById('approachesList');
-    
+    const container = document.getElementById('approachesList');
+
     if (!approaches || approaches.length === 0) {
-        approachesList.innerHTML = '<div class="loading-spinner">No approaches available yet. Try discussing with AI first.</div>';
+        container.innerHTML =
+            '<div class="loading-spinner">Discuss with AI to generate approaches.</div>';
         return;
     }
-    
-    // All values from the AI response are escaped before being inserted as HTML
-    // to prevent XSS if the AI returns unexpected content.
-    let html = '';
-    approaches.forEach((approach, index) => {
-        const name           = escapeHtml(approach.name           || 'Solution');
-        const timeComplexity = escapeHtml(approach.timeComplexity || 'N/A');
-        const spaceComplexity= escapeHtml(approach.spaceComplexity|| 'N/A');
-        const description    = escapeHtml(approach.description    || '');
-        const source         = approach.source ? escapeHtml(approach.source) : '';
 
+    let html = '';
+
+    approaches.forEach((a, i) => {
         html += `
-            <div class="approach-card">
-                <h4>Approach ${index + 1}: ${name}</h4>
-                <div class="complexity">
-                    <span class="time">⏱️ Time: ${timeComplexity}</span>
-                    <span class="space">💾 Space: ${spaceComplexity}</span>
-                </div>
-                <p class="description">${description}</p>
-                ${source ? `<span class="source-badge">📚 Source: ${source}</span>` : ''}
+        <div class="approach-card">
+            <h3>Approach ${i + 1}: ${escapeHtml(a.name)}</h3>
+
+            <div class="approach-meta">
+                <span class="time">⏱ ${escapeHtml(a.time)}</span>
+                <span class="space">💾 ${escapeHtml(a.space)}</span>
             </div>
-        `;
+
+            <div class="approach-section">
+                <strong>Intuition:</strong>
+                <div class="approach-text">${escapeHtml(a.intuition).replace(/\n/g,"<br>")}</div>
+            </div>
+
+            <div class="approach-section">
+                <strong>Steps:</strong>
+                <div class="approach-text">${escapeHtml(a.steps).replace(/\n/g,"<br>")}</div>
+            </div>
+
+            ${
+                a.example
+                    ? `<div class="approach-section example">
+                        <strong>Example:</strong>
+                        <pre class="code-block">${escapeHtml(a.example)}</pre>
+                       </div>`
+                    : ''
+            }
+
+            ${
+                a.code
+                    ? `<div class="approach-section code">
+                        <strong>Code:</strong>
+                        <pre><code>${escapeHtml(a.code)}</code></pre>
+                       </div>`
+                    : ''
+            }
+        </div>`;
     });
 
-    approachesList.innerHTML = html;
+    container.innerHTML = html;
     document.getElementById('approachesCount').textContent = approaches.length;
 }
 
@@ -298,14 +354,17 @@ function sendUserMessage() {
         : '';
 
     prompt += problemContext + solutionsContext;
+    const forceApproach =
+    /approach|method|solution|how|better|start|solve|idea|logic/i.test(message);
 
     // Send to background for AI processing
     chrome.runtime.sendMessage({
-        type: 'USER_QUERY',
-        query: prompt,
-        problemData: currentProblem,
-        chatHistory: chatHistory.slice(-10) // Last 10 messages for context
-    }, (response) => {
+    type: 'USER_QUERY',
+    query: prompt,
+    problemData: currentProblem,
+    chatHistory: chatHistory.slice(-10),
+    forceApproach
+}, (response) => {
         // Hide typing indicator
         hideTypingIndicator();
         
@@ -316,9 +375,14 @@ function sendUserMessage() {
             addAIMessage(response.reply);
             
             // Update approaches if provided
-            if (response.approaches) {
-                displayApproaches(response.approaches);
-            }
+            if (response.approaches && response.approaches.length > 0) {
+    storedApproaches = response.approaches;
+    displayApproaches(storedApproaches);
+
+    // Save per problem
+    const key = `approaches_${currentProblem.url}`;
+    chrome.storage.local.set({ [key]: storedApproaches });
+}
             
             // Update unlock progress
             updateUnlockProgress();
@@ -410,20 +474,24 @@ function addUserMessage(text) {
 // Add AI message to chat
 function addAIMessage(text) {
     const chatMessages = document.getElementById('chatMessages');
-    
+
+    // Convert line breaks → HTML
+    let formatted = escapeHtml(text)
+        .replace(/\n/g, "<br>")
+        .replace(/🔹/g, '<br><span class="ai-section">🔹</span>');
+
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message ai-message';
     messageDiv.innerHTML = `
         <div class="avatar">🤖</div>
-        <div class="message-content">
-            <p>${escapeHtml(text)}</p>
+        <div class="message-content ai-content">
+            <div class="ai-text">${formatted}</div>
         </div>
     `;
-    
+
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Add to chat history
+
     chatHistory.push({ role: 'assistant', content: text });
 }
 
@@ -508,23 +576,19 @@ function switchTab(tabId) {
 
 // Update solutions tab unlock progress
 function updateUnlockProgress() {
-    // Calculate progress based on hints used and chat interaction
-    const chatProgress = Math.min(chatHistory.length * 10, 50); // Up to 50% from chat
-    const hintProgress = hintsUsed * 15; // Up to 45% from hints
-    const totalProgress = Math.min(chatProgress + hintProgress, 100);
-    
-    document.getElementById('unlockProgress').style.width = `${totalProgress}%`;
-    
-    // Unlock at 100%
-    if (totalProgress >= 100) {
-        document.querySelector('.status-lock').innerHTML = '🔓 Solutions Tab Unlocked!';
-        document.querySelector('.status-lock').style.color = '#48bb78';
-        
-        // Notify parent to unlock solutions tab
-        window.parent.postMessage({ 
-            type: 'UNLOCK_SOLUTIONS',
-            unlocked: true 
-        }, '*');
+    const score =
+        (chatHistory.length * 5) +
+        (hintsUsed * 10) +
+        (secondsElapsed > 600 ? 20 : 0);
+
+    const progress = Math.min(score, 100);
+
+    document.getElementById('unlockProgress').style.width = `${progress}%`;
+
+    if (progress >= 100) {
+        document.querySelector('.status-lock').innerHTML =
+            '🔓 Mastery Achieved!';
+        document.querySelector('.status-lock').style.color = '#22c55e';
     }
 }
 
@@ -544,15 +608,27 @@ function loadSavedData() {
 
 // Save data to storage periodically
 setInterval(() => {
-    chrome.storage.local.set({
-        hintsUsed: hintsUsed,
-        secondsElapsed: secondsElapsed
-    });
+    try {
+        if (!currentProblem || !chrome?.storage?.local) return;
+
+        const key = `progress_${currentProblem.url}`;
+
+        chrome.storage.local.set({
+            [key]: {
+                hintsUsed,
+                secondsElapsed,
+                chatCount: chatHistory.length,
+                lastUpdated: Date.now()
+            }
+        });
+    } catch {}
 }, 5000);
 
 // Helper: Escape HTML to prevent XSS
 function escapeHtml(unsafe) {
-    return unsafe
+    if (unsafe === undefined || unsafe === null) return "";
+
+    return String(unsafe)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")

@@ -869,3 +869,107 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #718096;
 }
+
+.approach-card {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    transition: 0.3s ease;
+}
+
+.approach-card:hover {
+    border-color: #6366f1;
+    box-shadow: 0 0 15px rgba(99,102,241,0.3);
+}
+
+.approach-card h3 {
+    color: #60a5fa;
+    margin-bottom: 8px;
+}
+
+.approach-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 13px;
+    margin-bottom: 10px;
+}
+
+.time {
+    color: #22c55e;
+}
+
+.space {
+    color: #f59e0b;
+}
+
+.approach-section {
+    margin-bottom: 12px;
+}
+
+.approach-section strong {
+    color: #a78bfa;
+}
+
+.approach-section p {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #e5e7eb;   
+}
+
+.approach-section pre {
+    background: #0f172a;
+    padding: 10px;
+    border-radius: 8px;
+    overflow-x: auto;
+    color: #e5e7eb;
+}
+
+.approach-card {
+    color: #e5e7eb;  
+}
+
+.approach-section.code pre {
+    border-left: 4px solid #6366f1;
+}
+
+.approach-section.example pre {
+    border-left: 4px solid #22c55e;
+}
+
+.code-block {
+    background: #020617;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 13px;
+    overflow-x: auto;
+}
+
+/* ===== AI MESSAGE VISUAL UPGRADE ===== */
+
+.ai-content {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    color: #e5e7eb;
+}
+
+.ai-text {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.ai-section {
+    color: #60a5fa;
+    font-weight: 600;
+    display: block;
+    margin-top: 6px;
+}
+
+.approach-text {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #e5e7eb;
+}
