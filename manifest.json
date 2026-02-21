@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "CodeMentor AI - Your DSA Learning Companion",
-  "version": "1.0.0",
-  "description": "AI-powered mentor that helps you solve DSA problems without giving away solutions",
-  
+  "version": "2.0.0",
+  "description": "AI-powered DSA mentor: hint ladder, stuck detector, approach comparator, and more — without spoiling solutions",
+
   "icons": {
     "16": "assets/logo-16.png",
     "32": "assets/logo-32.png",
@@ -11,11 +11,7 @@
     "128": "assets/logo-128.png"
   },
 
-  "permissions": [
-    "storage",
-    "scripting",
-    "activeTab"
-  ],
+  "permissions": ["storage", "scripting", "activeTab", "clipboardWrite"],
 
   "host_permissions": [
     "https://leetcode.com/*",
@@ -32,7 +28,9 @@
     {
       "matches": [
         "https://leetcode.com/problems/*",
-        "https://codeforces.com/problemset/problem/*",
+        "https://codeforces.com/problemset/problem/*/*",
+        "https://codeforces.com/contest/*/problem/*",
+        "https://codeforces.com/gym/*/problem/*",
         "https://www.hackerrank.com/challenges/*",
         "https://www.hackerrank.com/contests/*/challenges/*",
         "https://www.codechef.com/problems/*",
@@ -47,19 +45,13 @@
         "utils/storage.js",
         "content.js"
       ],
-      "css": ["styles/sidebar.css"],
       "run_at": "document_end"
     }
   ],
 
   "web_accessible_resources": [
     {
-      "resources": [
-        "sidebar.html",
-        "sidebar.js",
-        "assets/*",
-        "styles/*"
-      ],
+      "resources": ["sidebar.html", "sidebar.js", "assets/*", "styles/*"],
       "matches": ["<all_urls>"]
     }
   ],

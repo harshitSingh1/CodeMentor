@@ -1,369 +1,251 @@
-/**
- * [CodeMentor Self-Review: PASSED]
- *
- * Changes made:
- *   - Added cleanProblemText(rawText): removes HTML tags, collapses blank lines, trims
- *   - Added getFullProblemText(platform): scrapes full problem text via platform selectors
- *   - Added getSolutions(): scrapes user editor code and up to 3 LeetCode solutions-tab snippets
- *   - Extended scrapeProblemData() with fullProblemText and scrapedSolutions fields
- *   - Extended PROBLEM_DATA postMessage payload (strict superset of original)
- *
- * Infrastructure compliance:
- *   Tier 1 (Reuse As-Is): detectPlatform(), window.CodeMentorPlatforms registry,
- *                          sidebarIframe.contentWindow.postMessage channel
- *   Tier 2 (Extend Only): scrapeProblemData() extended additively after existing try/catch;
- *                          PROBLEM_DATA payload extended with fullProblemText and scrapedSolutions
- *   Tier 3 (Do Not Touch): confirmed unmodified
- *
- * Verification:
- *   ✓ Null guards on all DOM queries
- *   ✓ try/catch on all fallible operations
- *   ✓ All async operations awaited
- *   ✓ Message-passing keys aligned end-to-end
- *   ✓ Manifest v3 compliant
- *   ✓ Zero regressions to existing functionality
- *   ✓ JSDoc complete on all new functions
- *   ✓ Zero new console.log / TODO / dead code
- */
+// content.js — CodeMentor AI Content Script
 
-// content.js - Main injection script
-
-console.log('CodeMentor AI Content Script Loaded');
+'use strict';
 
 let sidebarIframe = null;
 let isSidebarVisible = false;
+let toggleBtn = null;
+let lastUrl = location.href;
+let injected = false;
+let navDebounceTimer = null;
 
-// Create and inject the sidebar when page loads
+// ── Boot ──────────────────────────────────────────────────────────────────────
+function boot() {
+  if (injected) return;
+  injected = true;
+  injectSidebar();
+  watchNavigation();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+
+// ── Sidebar injection ─────────────────────────────────────────────────────────
 function injectSidebar() {
-  console.log('Injecting CodeMentor AI sidebar...');
-  
-  // Check if sidebar already exists
-  if (document.getElementById('codementor-sidebar')) {
-    console.log('Sidebar already exists');
-    return;
-  }
-  
-  // Create iframe for our sidebar
+  if (document.getElementById('codementor-sidebar')) return;
+
   sidebarIframe = document.createElement('iframe');
   sidebarIframe.id = 'codementor-sidebar';
   sidebarIframe.src = chrome.runtime.getURL('sidebar.html');
-  
-  // Style the iframe
-  sidebarIframe.style.cssText = `
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: 400px;
-    height: 100vh;
-    border: none;
-    z-index: 999999;
-    box-shadow: -2px 0 10px rgba(0,0,0,0.1);
-    transition: transform 0.3s ease;
-    background: white;
-  `;
-  
-  // Initially hide sidebar (slide it out)
-  sidebarIframe.style.transform = 'translateX(100%)';
-  
-  // Add to page
+  setSidebarStyles(false);
   document.body.appendChild(sidebarIframe);
-  
-  // Add toggle button
-  addToggleButton();
-  
-  // Wait for iframe to load
-  sidebarIframe.addEventListener('load', () => {
-    console.log('Sidebar loaded');
-    
-    // Detect which platform we're on
-    const platform = detectPlatform();
-    
-    // Send platform info to sidebar
-    sidebarIframe.contentWindow.postMessage({
-      type: 'PLATFORM_INFO',
-      platform: platform,
-      url: window.location.href,
-      title: document.title
-    }, '*');
-    
-    // Scrape problem data
-    const problemData = scrapeProblemData(platform);
-    
-    // Send problem data to sidebar
-    sidebarIframe.contentWindow.postMessage({
-      type: 'PROBLEM_DATA',
-      data: problemData
-    }, '*');
-  });
+
+  toggleBtn = buildToggleButton();
+  document.body.appendChild(toggleBtn);
+
+  sidebarIframe.addEventListener('load', sendPlatformAndProblem, { once: true });
 }
 
-// Add floating button to toggle sidebar
-function addToggleButton() {
-  const button = document.createElement('div');
-  button.id = 'codementor-toggle';
-  button.innerHTML = '🤖';
-  button.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    width: 50px;
-    height: 50px;
-    border-radius: 25px;
-    background: #4CAF50;
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    cursor: pointer;
-    z-index: 999998;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-    transition: transform 0.2s;
-  `;
-  
-  button.addEventListener('mouseenter', () => {
-    button.style.transform = 'scale(1.1)';
-  });
-  
-  button.addEventListener('mouseleave', () => {
-    button.style.transform = 'scale(1)';
-  });
-  
-  button.addEventListener('click', toggleSidebar);
-  
-  document.body.appendChild(button);
-}
-
-// Toggle sidebar visibility
-function toggleSidebar() {
+function setSidebarStyles(visible) {
   if (!sidebarIframe) return;
-  
+  sidebarIframe.style.cssText = `
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    width: 400px !important;
+    height: 100vh !important;
+    border: none !important;
+    z-index: 2147483646 !important;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.45) !important;
+    transition: transform 0.3s cubic-bezier(.4,0,.2,1) !important;
+    transform: ${visible ? 'translateX(0)' : 'translateX(100%)'} !important;
+    background: #0d1117 !important;
+  `;
+}
+
+function buildToggleButton() {
+  const btn = document.createElement('button');
+  btn.id = 'codementor-toggle';
+  btn.setAttribute('aria-label', 'Toggle CodeMentor AI');
+  // Use logo image; fall back to text if image fails
+  const img = document.createElement('img');
+  img.src = chrome.runtime.getURL('assets/logo-32.png');
+  img.style.cssText = 'width:22px;height:22px;border-radius:5px;display:block;';
+  img.onerror = () => { img.style.display = 'none'; btn.textContent = 'CM'; };
+  btn.appendChild(img);
+  btn.style.cssText = `
+    position: fixed !important;
+    bottom: 24px !important;
+    right: 24px !important;
+    width: 46px !important;
+    height: 46px !important;
+    border-radius: 12px !important;
+    background: #7c3aed !important;
+    border: none !important;
+    cursor: pointer !important;
+    z-index: 2147483645 !important;
+    box-shadow: 0 4px 16px rgba(124,58,237,0.5) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: transform 0.15s !important;
+    padding: 0 !important;
+  `;
+  btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.1)'; });
+  btn.addEventListener('mouseleave', () => { btn.style.transform = ''; });
+  btn.addEventListener('click', toggleSidebar);
+  return btn;
+}
+
+// ── Toggle ────────────────────────────────────────────────────────────────────
+function toggleSidebar() {
   isSidebarVisible = !isSidebarVisible;
-  
-  if (isSidebarVisible) {
-    sidebarIframe.style.transform = 'translateX(0)';
-  } else {
-    sidebarIframe.style.transform = 'translateX(100%)';
+  if (sidebarIframe) {
+    sidebarIframe.style.transform = isSidebarVisible ? 'translateX(0)' : 'translateX(100%)';
   }
-  
-  // Update button appearance
-  const button = document.getElementById('codementor-toggle');
-  if (button) {
-    button.style.background = isSidebarVisible ? '#f44336' : '#4CAF50';
-    button.innerHTML = isSidebarVisible ? '✕' : '🤖';
+  if (toggleBtn) {
+    toggleBtn.style.background = isSidebarVisible ? '#6d28d9' : '#7c3aed';
   }
 }
 
-// Detect which platform we're on
+// ── Platform detection ────────────────────────────────────────────────────────
 function detectPlatform() {
-  const host = window.location.hostname;
-
-  if (host === 'leetcode.com')           return 'leetcode';
-  if (host === 'codeforces.com')         return 'codeforces';
-  if (host === 'www.hackerrank.com')     return 'hackerrank';
-  if (host === 'www.codechef.com')       return 'codechef';
-
+  const h = location.hostname;
+  if (h === 'leetcode.com')         return 'leetcode';
+  if (h === 'codeforces.com')       return 'codeforces';
+  if (h === 'www.hackerrank.com')   return 'hackerrank';
+  if (h === 'www.codechef.com')     return 'codechef';
   return 'unknown';
 }
 
-/**
- * Removes HTML tags from a string, collapses consecutive blank lines into one,
- * and trims surrounding whitespace.
- * @param {string} rawText - Raw text that may contain HTML markup.
- * @returns {string} Cleaned plain text.
- */
-function cleanProblemText(rawText) {
-  return rawText
-    .replace(/<[^>]*>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/**
- * Scrapes the complete problem description for the given platform using
- * platform-specific CSS selectors. Routes through the existing platform
- * identifier returned by detectPlatform() — no manual hostname checks.
- * @param {string} platform - Platform identifier ('leetcode', 'codeforces', etc.)
- * @returns {string|null} Cleaned plain-text problem description, or null on failure.
- */
-function getFullProblemText(platform) {
-  try {
-    const PLATFORM_SELECTORS = {
-      leetcode:   ['.elfjS', '.xFUwe'],
-      codeforces: ['.problem-statement'],
-      hackerrank: ['.challenge-text-body'],
-      codechef:   ['.problem-statement']
-    };
-
-    const selectors = PLATFORM_SELECTORS[platform];
-    if (!selectors) return null;
-
-    let element = null;
-    for (const selector of selectors) {
-      element = document.querySelector(selector);
-      if (element) break;
-    }
-
-    if (!element) {
-      console.error('[CodeMentor] fullProblemText: selector not found on this page');
-      return null;
-    }
-
-    const rawText = element.innerText;
-    if (!rawText || rawText.trim() === '') {
-      console.error('[CodeMentor] fullProblemText: element found but text is empty');
-      return null;
-    }
-
-    return cleanProblemText(rawText);
-  } catch (error) {
-    console.error('[CodeMentor] getFullProblemText: unexpected error:', error);
-    return null;
-  }
-}
-
-/**
- * Scrapes code solutions visible on the current page.
- * Handles both the user's active editor and the LeetCode solutions tab.
- * @returns {string[]} Array of trimmed, non-empty solution strings.
- *                     Returns empty array if nothing is found. Never null.
- */
-function getSolutions() {
-  try {
-    const platform = detectPlatform();
-    const solutions = [];
-
-    // Scenario A — User's active code editor (always attempt first)
-    try {
-      if (platform === 'leetcode') {
-        // Monaco editor: join all span innerText values within .view-lines
-        const viewLinesEl = document.querySelector('.view-lines');
-        if (viewLinesEl) {
-          const spans = viewLinesEl.querySelectorAll('span');
-          if (spans.length > 0) {
-            const editorText = Array.from(spans)
-              .map(span => span.innerText)
-              .join('\n')
-              .trim();
-            if (editorText) solutions.push(editorText);
-          }
-        }
-      } else if (platform === 'codeforces') {
-        const textarea = document.querySelector('#sourceCodeTextarea');
-        if (textarea) {
-          const code = textarea.value?.trim() || '';
-          if (code) solutions.push(code);
-        }
-      } else if (platform === 'hackerrank' || platform === 'codechef') {
-        const codeEl = document.querySelector('.CodeMirror-code');
-        if (codeEl) {
-          const code = codeEl.innerText?.trim() || '';
-          if (code) solutions.push(code);
-        }
-      }
-    } catch (editorError) {
-      console.error('[CodeMentor] getSolutions: error scraping editor:', editorError);
-    }
-
-    // Scenario B — LeetCode solutions tab (only when URL contains /solutions/)
-    if (window.location.href.includes('/solutions/')) {
-      try {
-        const codeBlocks = document.querySelectorAll('pre > code, .view-lines');
-        let scraped = 0;
-        for (const block of codeBlocks) {
-          if (scraped >= 3) break;
-          const code = block.innerText?.trim() || '';
-          if (code) {
-            solutions.push(code);
-            scraped++;
-          }
-        }
-      } catch (solutionsTabError) {
-        console.error('[CodeMentor] getSolutions: error scraping solutions tab:', solutionsTabError);
-      }
-    }
-
-    return solutions.filter(solution => solution.trim() !== '');
-  } catch (error) {
-    console.error('[CodeMentor] getSolutions: unexpected error:', error);
-    return [];
-  }
-}
-
-// Scrape problem data based on platform.
-// Each platform's scraper is defined in platforms/*.js and loaded before this
-// script via the manifest. They register themselves on window.CodeMentorPlatforms.
-function scrapeProblemData(platform) {
-  console.log('Scraping problem data for:', platform);
-
-  const problemData = {
-    title: '',
-    description: '',
-    difficulty: 'Unknown',
-    examples: [],
-    constraints: [],
-    platform,
-    url: window.location.href
+function isProblemPage(platform) {
+  const url = location.href;
+  const patterns = {
+    leetcode:   /leetcode\.com\/problems\//,
+    codeforces: /codeforces\.com\/(problemset\/problem|contest\/\d+\/problem|gym\/\d+\/problem)\//,
+    hackerrank: /hackerrank\.com\/(challenges|contests\/.+\/challenges)\//,
+    codechef:   /codechef\.com\/(problems|[A-Z0-9]+\/problems)\//
   };
+  return patterns[platform] ? patterns[platform].test(url) : false;
+}
+
+// ── Problem scraping ──────────────────────────────────────────────────────────
+function scrapeProblem(platform) {
+  const base = { platform, url: location.href, title: '', description: '', difficulty: 'Unknown' };
+  const scraper = window.CodeMentorPlatforms?.[platform];
+  if (!scraper) return base;
 
   try {
-    const scraper = window.CodeMentorPlatforms?.[platform];
-    if (scraper) {
-      Object.assign(problemData, scraper.scrape());
-      problemData.difficulty = scraper.getDifficulty?.() ?? 'Unknown';
+    const scraped = scraper.scrape?.() || {};
+    const difficulty = scraper.getDifficulty?.() || 'Unknown';
+    return {
+      ...base, ...scraped, difficulty,
+      fullProblemText: getFullText(platform),
+      scrapedSolutions: getSolutions(platform)
+    };
+  } catch (err) {
+    console.warn('[CodeMentor] scrape error:', err.message);
+    return { ...base, _error: err.message };
+  }
+}
+
+function getFullText(platform) {
+  const selectors = {
+    leetcode:   ['.elfjS', '.xFUwe', '[data-cy="question-content"]'],
+    codeforces: ['.problem-statement'],
+    hackerrank: ['.challenge-body-html', '[class*="challenge-body"]'],
+    codechef:   ['.problem-statement', '[class*="problem-statement"]', '.statement-body']
+  };
+  for (const sel of (selectors[platform] || [])) {
+    const el = document.querySelector(sel);
+    const text = el?.innerText?.trim();
+    if (text) return text.replace(/\n{3,}/g, '\n\n');
+  }
+  return null;
+}
+
+function getSolutions(platform) {
+  const solutions = [];
+  try {
+    if (platform === 'leetcode') {
+      const el = document.querySelector('.view-lines');
+      if (el) {
+        const code = Array.from(el.querySelectorAll('span')).map(s => s.innerText).join('\n').trim();
+        if (code) solutions.push(code);
+      }
+    } else if (platform === 'codeforces') {
+      const code = document.querySelector('#sourceCodeTextarea')?.value?.trim();
+      if (code) solutions.push(code);
     } else {
-      console.warn('CodeMentor: no scraper registered for platform:', platform);
+      const code = document.querySelector('.CodeMirror-code')?.innerText?.trim();
+      if (code) solutions.push(code);
     }
-  } catch (error) {
-    console.error('CodeMentor: error scraping problem data:', error);
+  } catch (e) {
+    console.warn('[CodeMentor] getSolutions error:', e.message);
   }
-
-  // Extend payload with full problem text and scraped solutions.
-  // Each call has its own try/catch — failures here never block the postMessage.
-  problemData.fullProblemText = getFullProblemText(platform);
-  problemData.scrapedSolutions = getSolutions();
-
-  return problemData;
+  return solutions;
 }
 
-// Listen for messages from the sidebar iframe.
-// We verify event.source to ensure only our own iframe can trigger actions —
-// without this check any script on the host page could send fake messages.
-window.addEventListener('message', (event) => {
-  if (!sidebarIframe || event.source !== sidebarIframe.contentWindow) return;
+// ── Send to sidebar ───────────────────────────────────────────────────────────
+function sendPlatformAndProblem() {
+  if (!sidebarIframe?.contentWindow) return;
+  const platform = detectPlatform();
 
-  if (event.data.type === 'TOGGLE_SIDEBAR') {
-    toggleSidebar();
-  }
+  sidebarIframe.contentWindow.postMessage({ type: 'PLATFORM_INFO', platform, url: location.href }, '*');
 
-  if (event.data.type === 'REQUEST_ANALYSIS') {
-    chrome.runtime.sendMessage({
-      type: 'ANALYZE_PROBLEM',
-      data: event.data.problemData
-    });
-  }
-});
+  if (!isProblemPage(platform)) return;
 
-// Listen for messages from background
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'TOGGLE_SIDEBAR') {
-    toggleSidebar();
-  }
-  
-  if (message.type === 'ANALYSIS_COMPLETE') {
-    // Send analysis to sidebar
-    if (sidebarIframe && sidebarIframe.contentWindow) {
-      sidebarIframe.contentWindow.postMessage({
-        type: 'ANALYSIS_RESULT',
-        data: message.data
-      }, '*');
+  // SPA platforms need DOM to settle after route change
+  const delay = ['leetcode', 'codechef', 'hackerrank'].includes(platform) ? 1200 : 400;
+
+  setTimeout(() => {
+    const data = scrapeProblem(platform);
+    if (data._error) {
+      sidebarIframe.contentWindow.postMessage({ type: 'PARSE_ERROR', data: { error: data._error } }, '*');
     }
-  }
+    sidebarIframe.contentWindow.postMessage({ type: 'PROBLEM_DATA', data }, '*');
+  }, delay);
+}
+
+// ── SPA navigation watcher ────────────────────────────────────────────────────
+function watchNavigation() {
+  const wrap = (method) => {
+    const orig = history[method];
+    history[method] = function (...args) {
+      const result = orig.apply(this, args);
+      scheduleNavCheck();
+      return result;
+    };
+  };
+  wrap('pushState');
+  wrap('replaceState');
+  window.addEventListener('popstate', scheduleNavCheck);
+
+  // Fallback: MutationObserver on body for SPA title changes
+  const obs = new MutationObserver(debounce(() => {
+    if (location.href !== lastUrl) scheduleNavCheck();
+  }, 600));
+  obs.observe(document.body, { childList: true, subtree: false });
+}
+
+function scheduleNavCheck() {
+  clearTimeout(navDebounceTimer);
+  navDebounceTimer = setTimeout(() => {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+    // Ensure sidebar iframe is still alive
+    if (!document.getElementById('codementor-sidebar')) {
+      injectSidebar();
+    } else {
+      sendPlatformAndProblem();
+    }
+  }, 800);
+}
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+// ── Message bridge ────────────────────────────────────────────────────────────
+window.addEventListener('message', (e) => {
+  if (!sidebarIframe || e.source !== sidebarIframe.contentWindow) return;
+  if (e.data?.type === 'TOGGLE_SIDEBAR') toggleSidebar();
 });
 
-// Start the extension when page loads
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectSidebar);
-} else {
-  injectSidebar();
-}
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'TOGGLE_SIDEBAR') toggleSidebar();
+});

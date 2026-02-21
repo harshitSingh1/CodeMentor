@@ -1,50 +1,35 @@
 // platforms/codechef.js
-// Scraper for CodeChef problem pages.
-//
-// CodeChef is a fully client-side React app — static HTML fetching returns
-// only a shell <div id="root"> with no problem content. Selectors cannot be
-// verified by fetching raw HTML from outside a browser.
-// They will work in the extension because content scripts run against the
-// live rendered DOM (after React hydration), not raw HTML.
-//
-// ⚠️  If CodeChef redesigns and selectors start missing, update them here.
-//
-// URL patterns:
-//   https://www.codechef.com/problems/CODE
-//   https://www.codechef.com/CONTEST/problems/CODE
-
+// CodeChef is a fully client-side React SPA. Selectors work on live DOM
+// (after hydration), not raw HTML. content.js waits 1200ms before scraping
+// to allow React to render the problem content.
 window.CodeMentorPlatforms = window.CodeMentorPlatforms || {};
 
 window.CodeMentorPlatforms.codechef = {
   scrape() {
-    // Title: CodeChef renders the problem title in an <h1>.
-    // CSS-module class names change on deploy, so we use multiple fallbacks
-    // with a plain h1 as the last resort.
-    const titleEl = (
+    const titleEl =
       document.querySelector('h1[class*="title"]') ||
       document.querySelector('.problem-name h1') ||
-      document.querySelector('.problems-page h1') ||
-      document.querySelector('h1')
-    );
+      document.querySelector('[class*="ProblemPage"] h1') ||
+      document.querySelector('[class*="problem-title"]') ||
+      document.querySelector('h1');
     const title = titleEl?.textContent?.trim() || '';
 
-    // Description: .problem-statement has been stable across CodeChef versions.
-    const descEl = (
+    const descEl =
       document.querySelector('.problem-statement') ||
       document.querySelector('[class*="problem-statement"]') ||
-      document.querySelector('.statement-body')
-    );
+      document.querySelector('.statement-body') ||
+      document.querySelector('[class*="ProblemStatement"]');
     const description = descEl?.textContent?.trim() || '';
 
     return { title, description };
   },
 
   getDifficulty() {
-    const el = (
+    const el =
       document.querySelector('[class*="difficulty-rating"]') ||
-      document.querySelector('[class*="difficulty"]') ||
-      document.querySelector('.problem-difficulty')
-    );
+      document.querySelector('[class*="DifficultyRating"]') ||
+      document.querySelector('.problem-difficulty') ||
+      document.querySelector('[class*="difficulty"]');
     return el?.textContent?.trim() || 'Unknown';
   }
 };

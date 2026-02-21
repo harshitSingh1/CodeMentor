@@ -1,647 +1,542 @@
-/**
- * [CodeMentor Self-Review: PASSED]
- *
- * Changes made:
- *   - Added prompt construction in sendUserMessage() using fullProblemText and
- *     scrapedSolutions from currentProblem before the chrome.runtime.sendMessage call
- *   - Changed query: message to query: prompt so the augmented prompt reaches background.js
- *
- * Infrastructure compliance:
- *   Tier 1 (Reuse As-Is): chrome.runtime.sendMessage call reused unchanged (same shape,
- *                          same callback); Gemini/GPT API call pathway unchanged
- *   Tier 2 (Extend Only): sendUserMessage() extended with prompt construction block;
- *                          onMessage listener implicitly handles fullProblemText and
- *                          scrapedSolutions via currentProblem = data in handleProblemData()
- *   Tier 3 (Do Not Touch): confirmed unmodified
- *
- * Verification:
- *   ✓ Null guards on all DOM queries
- *   ✓ try/catch on all fallible operations
- *   ✓ All async operations awaited
- *   ✓ Message-passing keys aligned end-to-end
- *   ✓ Manifest v3 compliant
- *   ✓ Zero regressions to existing functionality
- *   ✓ JSDoc complete on all new functions
- *   ✓ Zero new console.log / TODO / dead code
- */
+// sidebar.js — CodeMentor AI Sidebar Logic
 
-// sidebar.js - Sidebar functionality
+'use strict';
 
-// Global variables
+// ── State ─────────────────────────────────────────────────────────────────────
 let currentProblem = null;
 let currentPlatform = 'unknown';
 let hintsUsed = 0;
-const MAX_HINTS = 3;
+let hintLocked = false;
+let hintContents = {};
 let timerInterval = null;
 let secondsElapsed = 0;
 let isTimerRunning = false;
 let chatHistory = [];
 let storedApproaches = [];
+let stuckNudgeShown = false;
+let settings = { stuckEnabled: true, stuckThreshold: 15, mistakeRadarEnabled: true };
 
-// Initialize when page loads
+// ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('CodeMentor AI Sidebar Initialized');
-    initializeSidebar();
-    setupEventListeners();
-    setupMessageListener();
+  initSidebar();
+  setupTabs();
+  setupChat();
+  setupHints();
+  setupProgress();
+  setupSettings();
+  setupMessages();
 });
 
-// Initialize sidebar components
-function initializeSidebar() {
-    updatePlatformBadge('unknown');
-    loadSavedData();
-
-    // Show consent overlay on first use; hide it if already acknowledged.
-    chrome.storage.local.get('consentGiven', (result) => {
-        if (!result.consentGiven) {
-            document.getElementById('consentOverlay').style.display = 'flex';
-        } else {
-            document.getElementById('consentOverlay').style.display = 'none';
-            document.getElementById('userInput').focus();
-        }
-    });
-}
-
-// Setup all event listeners
-function setupEventListeners() {
-    // Close button
-    document.getElementById('closeSidebar').addEventListener('click', () => {
-        window.parent.postMessage({ type: 'TOGGLE_SIDEBAR' }, '*');
-    });
-
-    // Tab switching
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            switchTab(e.target.dataset.tab);
-        });
-    });
-
-    // Send message
-    document.getElementById('sendMessage').addEventListener('click', sendUserMessage);
-    
-    // Enter key to send (but Shift+Enter for new line)
-    document.getElementById('userInput').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendUserMessage();
-        }
-    });
-
-    // Hint button
-    document.getElementById('requestHint').addEventListener('click', requestHint);
-
-    // Timer controls
-    document.getElementById('startTimer').addEventListener('click', startTimer);
-    document.getElementById('pauseTimer').addEventListener('click', pauseTimer);
-    document.getElementById('resetTimer').addEventListener('click', resetTimer);
-
-    // Consent overlay accept
-    document.getElementById('consentAccept').addEventListener('click', () => {
-        chrome.storage.local.set({ consentGiven: true }, () => {
-            document.getElementById('consentOverlay').style.display = 'none';
-            document.getElementById('userInput').focus();
-        });
-    });
-
-    // Clear all local data.
-    // confirm() is blocked in cross-origin iframes (Chrome v92+), so we use a
-    // two-tap pattern: first click arms the button, second click executes.
-    const clearBtn = document.getElementById('clearData');
-    let clearArmed = false;
-    let clearArmTimer = null;
-
-    clearBtn.addEventListener('click', () => {
-        if (!clearArmed) {
-            clearArmed = true;
-            clearBtn.textContent = 'Tap again to confirm';
-            clearBtn.classList.add('clear-data-btn--armed');
-            clearArmTimer = setTimeout(() => {
-                clearArmed = false;
-                clearBtn.textContent = 'Clear all my data';
-                clearBtn.classList.remove('clear-data-btn--armed');
-            }, 3000);
-            return;
-        }
-
-        clearTimeout(clearArmTimer);
-        clearArmed = false;
-        clearBtn.textContent = 'Clear all my data';
-        clearBtn.classList.remove('clear-data-btn--armed');
-
-        chrome.storage.local.clear(() => {
-            hintsUsed = 0;
-            secondsElapsed = 0;
-            chatHistory = [];
-            pauseTimer();
-            updateHintsUsed();
-            updateTimerDisplay();
-            document.getElementById('chatMessages').innerHTML = '';
-            document.getElementById('consentOverlay').style.display = 'flex';
-        });
-    });
-}
-
-// Listen for messages from the host page (content.js via postMessage).
-// We verify that the message comes from window.parent (the tab, where content.js
-// injected the iframe) to prevent a malicious sub-frame from spoofing messages.
-function setupMessageListener() {
-    window.addEventListener('message', (event) => {
-        if (event.source !== window.parent) return;
-
-        console.log('Sidebar received:', event.data);
-
-        switch (event.data.type) {
-            case 'PLATFORM_INFO':
-                handlePlatformInfo(event.data);
-                break;
-            case 'PROBLEM_DATA':
-                handleProblemData(event.data.data);
-                break;
-            case 'ANALYSIS_RESULT':
-                handleAnalysisResult(event.data.data);
-                break;
-        }
-    });
-}
-
-// Handle platform information
-function handlePlatformInfo(data) {
-    currentPlatform = data.platform;
-    updatePlatformBadge(data.platform);
-}
-
-// Handle problem data
-function handleProblemData(data) {
-    const newProblemId = data.url;
-    const approachKey = `approaches_${newProblemId}`;
-chrome.storage.local.get(approachKey, (res) => {
-    if (res[approachKey]) {
-        storedApproaches = res[approachKey];
-        displayApproaches(storedApproaches);
+function initSidebar() {
+  chrome.storage.local.get(['consentGiven', 'geminiApiKey', 'settings'], (r) => {
+    if (!r.consentGiven) {
+      showEl('consentOverlay');
+    } else if (!r.geminiApiKey) {
+      showEl('apiKeyOverlay');
+    } else {
+      setDot('statusApi', 'on');
     }
-});
+    if (r.settings) Object.assign(settings, r.settings);
+    applySettings();
+  });
 
-    // Reset hints & timer if problem changed
-    if (!currentProblem || currentProblem.url !== newProblemId) {
-        hintsUsed = 0;
-        secondsElapsed = 0;
-        chatHistory = [];
-        pauseTimer();
-        updateHintsUsed();
-        updateTimerDisplay();
-        document.getElementById('hintsList').innerHTML = '';
-        document.getElementById('chatMessages').innerHTML = '';
-    }
-
-    const key = `progress_${newProblemId}`;
-chrome.storage.local.get(key, (res) => {
-    const saved = res[key];
-    if (!saved) return;
-
-    hintsUsed = saved.hintsUsed || 0;
-    secondsElapsed = saved.secondsElapsed || 0;
-
-    updateHintsUsed();
-    updateTimerDisplay();
-});
-
-    currentProblem = data;
-
-    document.getElementById('problemTitle').textContent =
-        data.title || 'Unknown Problem';
-
-    document.getElementById('difficulty').textContent =
-        data.difficulty || 'Unknown';
-
-    addAIMessage(
-        `I see you're working on "${data.title}". Tell me your approach — I'll guide you step-by-step without spoiling.`
-    );
-}
-
-// Update platform badge
-function updatePlatformBadge(platform) {
-    const badge = document.getElementById('platformBadge');
-    badge.textContent = platform.charAt(0).toUpperCase() + platform.slice(1);
-    
-    // Change color based on platform
-    const colors = {
-        leetcode: '#f89f1b',
-        codeforces: '#3182ce',
-        hackerrank: '#00b551',
-        codechef: '#5b4638',
-        unknown: '#64748b'
-    };
-    badge.style.background = colors[platform] || colors.unknown;
-    badge.style.color = 'white';
-}
-
-// Handle AI analysis results
-function handleAnalysisResult(data) {
-    console.log('Analysis received:', data);
-    
-    // Show intuition
-    if (data.intuition) {
-        document.getElementById('intuitionText').textContent = data.intuition;
-        document.getElementById('intuitionBox').style.display = 'block';
-    }
-    
-    // Show approaches
-    if (data.approaches) {
-        displayApproaches(data.approaches);
-    }
-    
-    // Add AI response to chat
-    if (data.explanation) {
-        addAIMessage(data.explanation);
-    }
-    
-    // Update unlock progress
-    updateUnlockProgress();
-}
-
-// Display approaches in Approaches tab
-function displayApproaches(approaches) {
-    const container = document.getElementById('approachesList');
-
-    if (!approaches || approaches.length === 0) {
-        container.innerHTML =
-            '<div class="loading-spinner">Discuss with AI to generate approaches.</div>';
-        return;
-    }
-
-    let html = '';
-
-    approaches.forEach((a, i) => {
-        html += `
-        <div class="approach-card">
-            <h3>Approach ${i + 1}: ${escapeHtml(a.name)}</h3>
-
-            <div class="approach-meta">
-                <span class="time">⏱ ${escapeHtml(a.time)}</span>
-                <span class="space">💾 ${escapeHtml(a.space)}</span>
-            </div>
-
-            <div class="approach-section">
-                <strong>Intuition:</strong>
-                <div class="approach-text">${escapeHtml(a.intuition).replace(/\n/g,"<br>")}</div>
-            </div>
-
-            <div class="approach-section">
-                <strong>Steps:</strong>
-                <div class="approach-text">${escapeHtml(a.steps).replace(/\n/g,"<br>")}</div>
-            </div>
-
-            ${
-                a.example
-                    ? `<div class="approach-section example">
-                        <strong>Example:</strong>
-                        <pre class="code-block">${escapeHtml(a.example)}</pre>
-                       </div>`
-                    : ''
-            }
-
-            ${
-                a.code
-                    ? `<div class="approach-section code">
-                        <strong>Code:</strong>
-                        <pre><code>${escapeHtml(a.code)}</code></pre>
-                       </div>`
-                    : ''
-            }
-        </div>`;
+  document.getElementById('consentAccept').addEventListener('click', () => {
+    chrome.storage.local.set({ consentGiven: true }, () => {
+      hideEl('consentOverlay');
+      chrome.storage.local.get('geminiApiKey', (r) => {
+        if (!r.geminiApiKey) showEl('apiKeyOverlay');
+      });
     });
+  });
 
-    container.innerHTML = html;
-    document.getElementById('approachesCount').textContent = approaches.length;
+  document.getElementById('overlayApiKeySave').addEventListener('click', () => {
+    const key = document.getElementById('overlayApiKeyInput').value.trim();
+    if (!key) { document.getElementById('overlayApiKeyError').style.display = 'block'; return; }
+    chrome.storage.local.set({ geminiApiKey: key }, () => {
+      hideEl('apiKeyOverlay');
+      setDot('statusApi', 'on');
+      toast('API key saved', 'success');
+    });
+  });
+
+  document.getElementById('overlayApiKeySkip').addEventListener('click', () => hideEl('apiKeyOverlay'));
+  document.getElementById('closeSidebar').addEventListener('click', () => {
+    window.parent.postMessage({ type: 'TOGGLE_SIDEBAR' }, '*');
+  });
 }
 
-// Send user message
-function sendUserMessage() {
-    const input = document.getElementById('userInput');
-    const message = input.value.trim();
-    
-    if (!message) return;
-    
-    // Add user message to chat
-    addUserMessage(message);
-    
-    // Clear input
-    input.value = '';
-    
-    // Disable send button temporarily
-    const sendBtn = document.getElementById('sendMessage');
-    sendBtn.disabled = true;
-    
-    // Show typing indicator
-    showTypingIndicator();
-    
-    // Build augmented prompt from user message plus any available problem context.
-    // When fullProblemText is null and scrapedSolutions is empty, prompt === message
-    // (byte-for-byte identical to the original behaviour).
-    const fullProblemText = currentProblem?.fullProblemText ?? null;
-    const scrapedSolutions = currentProblem?.scrapedSolutions ?? [];
+function applySettings() {
+  setCheck('stuckEnabled', settings.stuckEnabled);
+  setCheck('mistakeRadarEnabled', settings.mistakeRadarEnabled);
+  const t = document.getElementById('stuckThreshold');
+  if (t) t.value = settings.stuckThreshold;
+}
 
-    let prompt = message;
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function setupTabs() {
+  document.querySelectorAll('.cm-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+}
 
-    const problemContext = fullProblemText
-        ? `\n\nFULL PROBLEM DESCRIPTION:\n${fullProblemText}`
-        : '';
+function switchTab(id) {
+  document.querySelectorAll('.cm-tab').forEach(b => b.classList.toggle('cm-tab--active', b.dataset.tab === id));
+  document.querySelectorAll('.cm-pane').forEach(p => p.classList.toggle('cm-pane--active', p.id === `pane-${id}`));
+}
 
-    const solutionsContext = scrapedSolutions && scrapedSolutions.length > 0
-        ? `\n\nREFERENCE CODE (internal use only — do NOT reproduce verbatim to user):\n` +
-          `Use these to verify your reasoning and ensure accuracy on hard problems.\n\n` +
-          scrapedSolutions.map((s, i) => `[Solution ${i + 1}]\n${s}`).join('\n\n')
-        : '';
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function setupChat() {
+  document.getElementById('sendMessage').addEventListener('click', sendMessage);
+  document.getElementById('userInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  document.getElementById('nudgeClose').addEventListener('click', () => hideEl('stuckNudge'));
+  document.getElementById('explainBarClose').addEventListener('click', () => hideEl('explainBar'));
+  document.getElementById('explainLinesBtn').addEventListener('click', explainSelectedCode);
 
-    prompt += problemContext + solutionsContext;
-    const forceApproach =
-    /approach|method|solution|how|better|start|solve|idea|logic/i.test(message);
+  document.getElementById('userInput').addEventListener('input', (e) => {
+    const val = e.target.value.trim();
+    const lines = val.split('\n').length;
+    const hasCode = /[{};()=>]/.test(val);
+    document.getElementById('explainBar').style.display =
+      (lines >= 3 && lines <= 30 && hasCode) ? 'flex' : 'none';
+  });
+}
 
-    // Send to background for AI processing
-    chrome.runtime.sendMessage({
+function sendMessage() {
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  addUserMsg(text);
+  input.value = '';
+  hideEl('explainBar');
+
+  const sendBtn = document.getElementById('sendMessage');
+  sendBtn.disabled = true;
+  showTyping();
+
+  if (settings.mistakeRadarEnabled) runMistakeRadar(text);
+
+  chrome.runtime.sendMessage({
     type: 'USER_QUERY',
-    query: prompt,
+    query: text,
     problemData: currentProblem,
-    chatHistory: chatHistory.slice(-10),
-    forceApproach
-}, (response) => {
-        // Hide typing indicator
-        hideTypingIndicator();
-        
-        // Re-enable send button
-        sendBtn.disabled = false;
-        
-        if (response && response.success) {
-            addAIMessage(response.reply);
-            
-            // Update approaches if provided
-            if (response.approaches && response.approaches.length > 0) {
-    storedApproaches = response.approaches;
-    displayApproaches(storedApproaches);
+    chatHistory: chatHistory.slice(-10)
+  }, (resp) => {
+    hideTyping();
+    sendBtn.disabled = false;
 
-    // Save per problem
-    const key = `approaches_${currentProblem.url}`;
-    chrome.storage.local.set({ [key]: storedApproaches });
-}
-            
-            // Update unlock progress
-            updateUnlockProgress();
-        } else {
-            addAIMessage("I'm having trouble processing that. Could you please rephrase?");
-        }
-    });
-}
-
-// Request a hint
-function requestHint() {
-    if (hintsUsed >= MAX_HINTS) {
-        addAIMessage("You've used all your hints for this problem. Try to solve it now!");
-        return;
+    if (resp?.success) {
+      addAIMsg(resp.reply);
+      if (resp.approaches?.length) {
+        storedApproaches = resp.approaches;
+        saveProblemState();
+        setStat('statApproaches', storedApproaches.length);
+        buildComparatorTable(storedApproaches);
+      }
+    } else if (resp?.error === 'NO_API_KEY') {
+      addAIMsg('⚠️ API key not set. Go to Settings tab to add your Gemini key.');
+      showEl('apiKeyOverlay');
+    } else {
+      addAIMsg("I couldn't process that. Please rephrase.");
     }
-    
-    hintsUsed++;
-    updateHintsUsed();
-    
-    // Disable hint button
-    document.getElementById('requestHint').disabled = true;
-    
-    // Request hint from AI
-    chrome.runtime.sendMessage({
-        type: 'REQUEST_HINT',
-        problemData: currentProblem,
-        hintLevel: hintsUsed // Level 1, 2, or 3
-    }, (response) => {
-        document.getElementById('requestHint').disabled = false;
-        
-        if (response && response.hint) {
-            displayHint(response.hint);
-        }
-    });
+    setStat('statMessages', chatHistory.filter(m => m.role === 'user').length);
+  });
 }
 
-// Display a hint
-function displayHint(hintText) {
-    const hintsList = document.getElementById('hintsList');
-    
-    const hintElement = document.createElement('div');
-    hintElement.className = 'hint-item';
-    hintElement.textContent = `Hint ${hintsUsed}: ${hintText}`;
-    
-    hintsList.appendChild(hintElement);
-    
-    // Also show in chat
-    addAIMessage(`💡 Hint ${hintsUsed}: ${hintText}`);
-    
-    // Update total hints in progress tab
-    document.getElementById('totalHints').textContent = hintsUsed;
+function runMistakeRadar(text) {
+  chrome.runtime.sendMessage({ type: 'MISTAKE_RADAR', userText: text, platform: currentPlatform }, (resp) => {
+    if (resp?.pitfalls?.length) {
+      const chips = document.getElementById('radarChips');
+      chips.innerHTML = resp.pitfalls.map(p => `<span class="cm-chip">${esc(p)}</span>`).join('');
+      document.getElementById('mistakeRadar').style.display = 'flex';
+    }
+  });
 }
 
-// Update hints used display
-function updateHintsUsed() {
+function explainSelectedCode() {
+  const code = document.getElementById('userInput').value.trim();
+  if (!code) return;
+  hideEl('explainBar');
+  addUserMsg(`[Explain this code]\n${code}`);
+  document.getElementById('userInput').value = '';
+  const sendBtn = document.getElementById('sendMessage');
+  sendBtn.disabled = true;
+  showTyping();
+
+  chrome.runtime.sendMessage({ type: 'EXPLAIN_LINES', code }, (resp) => {
+    hideTyping();
+    sendBtn.disabled = false;
+    addAIMsg(resp?.success ? resp.explanation : (resp?.error || 'Could not explain this snippet.'));
+  });
+}
+
+// ── Hints / Hint Ladder ───────────────────────────────────────────────────────
+function setupHints() {
+  document.getElementById('nextHintBtn').addEventListener('click', revealNextHint);
+  document.getElementById('hintLockToggle').addEventListener('change', (e) => {
+    hintLocked = e.target.checked;
+    const btn = document.getElementById('nextHintBtn');
+    btn.disabled = hintLocked || hintsUsed >= 4;
+    btn.textContent = hintLocked ? '🔒 Locked' : (hintsUsed >= 4 ? 'All hints revealed' : 'Next Hint →');
+  });
+}
+
+function revealNextHint() {
+  if (hintLocked || hintsUsed >= 4) return;
+  const level = hintsUsed + 1;
+  const rung = document.getElementById(`rung-${level}`);
+
+  rung.classList.replace('cm-rung--locked', 'cm-rung--active');
+  rung.querySelector('.cm-rung__status').textContent = 'Loading…';
+
+  const content = document.createElement('div');
+  content.className = 'cm-rung__content cm-skeleton';
+  content.style.height = '40px';
+  content.id = `rung-content-${level}`;
+  rung.appendChild(content);
+
+  document.getElementById('nextHintBtn').disabled = true;
+
+  chrome.runtime.sendMessage({ type: 'HINT_LADDER', level, problemData: currentProblem }, (resp) => {
+    const el = document.getElementById(`rung-content-${level}`);
+    if (resp?.success && resp.hint) {
+      hintContents[level] = resp.hint;
+      hintsUsed++;
+      if (el) { el.classList.remove('cm-skeleton'); el.style.height = ''; el.textContent = resp.hint; }
+      rung.querySelector('.cm-rung__status').textContent = 'Revealed';
+      rung.classList.replace('cm-rung--active', 'cm-rung--unlocked');
+    } else {
+      if (el) el.textContent = resp?.error === 'NO_API_KEY' ? '⚠️ API key required.' : 'Could not load hint.';
+      rung.querySelector('.cm-rung__status').textContent = 'Error';
+    }
     document.getElementById('hintsUsed').textContent = hintsUsed;
-    
-    // Update dots
-    for (let i = 1; i <= MAX_HINTS; i++) {
-        const dot = document.getElementById(`dot${i}`);
-        if (i <= hintsUsed) {
-            dot.classList.add('used');
-        } else {
-            dot.classList.remove('used');
-        }
+    setStat('statHints', hintsUsed);
+    const btn = document.getElementById('nextHintBtn');
+    btn.disabled = hintsUsed >= 4 || hintLocked;
+    btn.textContent = hintsUsed >= 4 ? 'All hints revealed' : 'Next Hint →';
+  });
+}
+
+// ── Progress ──────────────────────────────────────────────────────────────────
+function setupProgress() {
+  document.getElementById('startTimer').addEventListener('click', startTimer);
+  document.getElementById('pauseTimer').addEventListener('click', pauseTimer);
+  document.getElementById('resetTimer').addEventListener('click', resetTimer);
+  document.getElementById('copySessionBtn').addEventListener('click', copySession);
+
+  const clearBtn = document.getElementById('clearData');
+  let armed = false, armTimer;
+  clearBtn.addEventListener('click', () => {
+    if (!armed) {
+      armed = true;
+      clearBtn.textContent = 'Tap again to confirm';
+      clearBtn.style.background = '#d29922';
+      armTimer = setTimeout(() => {
+        armed = false; clearBtn.textContent = 'Clear all my data'; clearBtn.style.background = '';
+      }, 3000);
+    } else {
+      clearTimeout(armTimer);
+      chrome.storage.local.clear(() => {
+        hintsUsed = 0; secondsElapsed = 0; chatHistory = [];
+        storedApproaches = []; hintContents = {};
+        pauseTimer(); resetHintRungs(); updateTimerDisplay();
+        document.getElementById('chatMessages').innerHTML = '';
+        showEl('consentOverlay');
+        armed = false; clearBtn.textContent = 'Clear all my data'; clearBtn.style.background = '';
+      });
     }
+  });
 }
 
-// Add user message to chat
-function addUserMessage(text) {
-    const chatMessages = document.getElementById('chatMessages');
-    
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message user-message';
-    messageDiv.innerHTML = `
-        <div class="avatar">👤</div>
-        <div class="message-content">
-            <p>${escapeHtml(text)}</p>
-        </div>
-    `;
-    
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Add to chat history
-    chatHistory.push({ role: 'user', content: text });
-}
-
-// Add AI message to chat
-function addAIMessage(text) {
-    const chatMessages = document.getElementById('chatMessages');
-
-    // Convert line breaks → HTML
-    let formatted = escapeHtml(text)
-        .replace(/\n/g, "<br>")
-        .replace(/🔹/g, '<br><span class="ai-section">🔹</span>');
-
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message ai-message';
-    messageDiv.innerHTML = `
-        <div class="avatar">🤖</div>
-        <div class="message-content ai-content">
-            <div class="ai-text">${formatted}</div>
-        </div>
-    `;
-
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-
-    chatHistory.push({ role: 'assistant', content: text });
-}
-
-// Show typing indicator
-function showTypingIndicator() {
-    const chatMessages = document.getElementById('chatMessages');
-    
-    const indicator = document.createElement('div');
-    indicator.id = 'typingIndicator';
-    indicator.className = 'message ai-message';
-    indicator.innerHTML = `
-        <div class="avatar">🤖</div>
-        <div class="message-content">
-            <p>Typing<span class="dot-animation">...</span></p>
-        </div>
-    `;
-    
-    chatMessages.appendChild(indicator);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-// Hide typing indicator
-function hideTypingIndicator() {
-    const indicator = document.getElementById('typingIndicator');
-    if (indicator) {
-        indicator.remove();
-    }
-}
-
-// Timer functions
 function startTimer() {
-    if (!isTimerRunning) {
-        isTimerRunning = true;
-        timerInterval = setInterval(updateTimer, 1000);
-    }
+  if (isTimerRunning) return;
+  isTimerRunning = true;
+  timerInterval = setInterval(() => { secondsElapsed++; updateTimerDisplay(); checkStuck(); }, 1000);
+  setDot('statusTimer', 'on');
 }
 
 function pauseTimer() {
-    isTimerRunning = false;
-    clearInterval(timerInterval);
+  isTimerRunning = false; clearInterval(timerInterval);
+  setDot('statusTimer', secondsElapsed > 0 ? 'warn' : 'off');
 }
 
 function resetTimer() {
-    pauseTimer();
-    secondsElapsed = 0;
-    updateTimerDisplay();
-}
-
-function updateTimer() {
-    secondsElapsed++;
-    updateTimerDisplay();
-    
-    // Smart check: if time is running out (>30 min), offer hint
-    if (secondsElapsed > 1800 && hintsUsed < MAX_HINTS) { // 30 minutes
-        addAIMessage("You've been working on this for 30 minutes. Would you like a hint to help you progress?");
-        pauseTimer(); // Pause to avoid spam
-    }
+  pauseTimer(); secondsElapsed = 0; stuckNudgeShown = false;
+  updateTimerDisplay(); setDot('statusTimer', 'off');
 }
 
 function updateTimerDisplay() {
-    const minutes = Math.floor(secondsElapsed / 60);
-    const seconds = secondsElapsed % 60;
-    document.getElementById('timer').textContent = 
-        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    document.getElementById('timeOnProblem').textContent = `${minutes} min`;
+  const m = Math.floor(secondsElapsed / 60);
+  const s = secondsElapsed % 60;
+  const str = `${pad(m)}:${pad(s)}`;
+  document.getElementById('timer').textContent = str;
+  document.getElementById('statusTimerText').textContent = `${m}:${pad(s)}`;
+  setStat('statTime', `${m} min`);
 }
 
-// Switch between tabs
-function switchTab(tabId) {
-    // Update tab buttons
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
-    
-    // Update tab panes
-    document.querySelectorAll('.tab-pane').forEach(pane => {
-        pane.classList.remove('active');
-    });
-    document.getElementById(`${tabId}Tab`).classList.add('active');
+function checkStuck() {
+  if (!settings.stuckEnabled || stuckNudgeShown) return;
+  const threshold = (settings.stuckThreshold || 15) * 60;
+  if (secondsElapsed < threshold) return;
+  stuckNudgeShown = true;
+  chrome.runtime.sendMessage({
+    type: 'STUCK_NUDGE', minutes: Math.floor(secondsElapsed / 60), problemData: currentProblem
+  }, (resp) => {
+    const el = document.getElementById('nudgeText');
+    if (el) el.textContent = resp?.nudge || 'Check edge cases and constraints.';
+    document.getElementById('stuckNudge').style.display = 'flex';
+  });
 }
 
-// Update solutions tab unlock progress
-function updateUnlockProgress() {
-    const score =
-        (chatHistory.length * 5) +
-        (hintsUsed * 10) +
-        (secondsElapsed > 600 ? 20 : 0);
-
-    const progress = Math.min(score, 100);
-
-    document.getElementById('unlockProgress').style.width = `${progress}%`;
-
-    if (progress >= 100) {
-        document.querySelector('.status-lock').innerHTML =
-            '🔓 Mastery Achieved!';
-        document.querySelector('.status-lock').style.color = '#22c55e';
+function copySession() {
+  const btn = document.getElementById('copySessionBtn');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  chrome.runtime.sendMessage({
+    type: 'SESSION_SUMMARY',
+    problem: currentProblem, chatHistory, hintsRevealed: hintsUsed,
+    approaches: storedApproaches, timeElapsed: secondsElapsed
+  }, (resp) => {
+    btn.disabled = false; btn.textContent = 'Copy Session Summary';
+    if (resp?.success && resp.summary) {
+      navigator.clipboard.writeText(resp.summary)
+        .then(() => toast('Session summary copied!', 'success'))
+        .catch(() => toast('Copy failed', 'error'));
+    } else {
+      toast(resp?.error === 'NO_API_KEY' ? 'API key required' : 'Could not generate summary', 'error');
     }
+  });
 }
 
-// Load saved data from storage
-function loadSavedData() {
-    chrome.storage.local.get(['hintsUsed', 'secondsElapsed'], (result) => {
-        if (result.hintsUsed) {
-            hintsUsed = result.hintsUsed;
-            updateHintsUsed();
-        }
-        if (result.secondsElapsed) {
-            secondsElapsed = result.secondsElapsed;
-            updateTimerDisplay();
-        }
+function buildComparatorTable(approaches) {
+  if (!approaches?.length) return;
+  const card = document.getElementById('approachComparatorCard');
+  const container = document.getElementById('comparatorTable');
+  const rows = approaches.map(a => `
+    <tr>
+      <td><strong>${esc(a.name || '')}</strong></td>
+      <td>${esc(a.intuition || a.idea || '')}</td>
+      <td>${esc(a.time || '')}</td>
+      <td>${esc(a.space || '')}</td>
+    </tr>`).join('');
+  container.innerHTML = `<table>
+    <thead><tr><th>Approach</th><th>Idea</th><th>Time</th><th>Space</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+  card.style.display = 'block';
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+function setupSettings() {
+  document.getElementById('saveApiKey').addEventListener('click', () => {
+    const key = document.getElementById('apiKeyInput').value.trim();
+    if (!key) { toast('Enter a valid API key', 'error'); return; }
+    chrome.storage.local.set({ geminiApiKey: key }, () => {
+      toast('API key saved', 'success'); setDot('statusApi', 'on');
     });
+  });
+
+  ['stuckEnabled', 'stuckThreshold', 'mistakeRadarEnabled'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', saveSettings);
+  });
 }
 
-// Save data to storage periodically
+function saveSettings() {
+  settings.stuckEnabled = document.getElementById('stuckEnabled')?.checked ?? true;
+  settings.stuckThreshold = parseInt(document.getElementById('stuckThreshold')?.value || '15', 10);
+  settings.mistakeRadarEnabled = document.getElementById('mistakeRadarEnabled')?.checked ?? true;
+  chrome.storage.local.set({ settings });
+}
+
+// ── Messages from content.js ──────────────────────────────────────────────────
+function setupMessages() {
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent) return;
+    const { type, data, platform } = e.data || {};
+    if (type === 'PLATFORM_INFO') { currentPlatform = platform || 'unknown'; updatePlatformBadge(platform); setDiag('diagPlatform', platform || '—'); }
+    if (type === 'PROBLEM_DATA')  { onProblemData(data); }
+    if (type === 'PARSE_ERROR')   { setDot('statusParse', 'off'); setDiag('diagError', data?.error || 'Parse error'); }
+  });
+}
+
+function onProblemData(data) {
+  if (!data) return;
+  const isNew = !currentProblem || currentProblem.url !== data.url;
+
+  if (isNew) {
+    hintsUsed = 0; hintContents = {}; chatHistory = [];
+    storedApproaches = []; stuckNudgeShown = false;
+    secondsElapsed = 0; pauseTimer(); updateTimerDisplay();
+    resetHintRungs();
+    document.getElementById('chatMessages').innerHTML = '';
+    document.getElementById('mistakeRadar').style.display = 'none';
+    document.getElementById('stuckNudge').style.display = 'none';
+    document.getElementById('approachComparatorCard').style.display = 'none';
+  }
+
+  currentProblem = data;
+
+  document.getElementById('problemTitle').textContent = data.title || 'Unknown Problem';
+  setDifficultyBadge(data.difficulty || '');
+
+  const parsed = !!(data.title || data.description);
+  setDot('statusParse', parsed ? 'on' : 'off');
+  setDiag('diagPageType', data.url?.includes('/problems/') ? 'problem' : 'other');
+  setDiag('diagTitleLen', `${(data.title || '').length} chars`);
+  setDiag('diagStmtLen', `${(data.fullProblemText || data.description || '').length} chars`);
+  setDiag('diagTimestamp', new Date().toLocaleTimeString());
+  setDiag('diagError', '—');
+
+  if (isNew) {
+    chrome.storage.local.get([`prog_${data.url}`, `appr_${data.url}`], (r) => {
+      const saved = r[`prog_${data.url}`];
+      if (saved) {
+        secondsElapsed = saved.secondsElapsed || 0;
+        hintsUsed = saved.hintsUsed || 0;
+        hintContents = saved.hintContents || {};
+        updateTimerDisplay();
+        document.getElementById('hintsUsed').textContent = hintsUsed;
+        for (let i = 1; i <= hintsUsed; i++) restoreRung(i, hintContents[i] || '');
+        const btn = document.getElementById('nextHintBtn');
+        btn.disabled = hintsUsed >= 4;
+        btn.textContent = hintsUsed >= 4 ? 'All hints revealed' : 'Next Hint →';
+      }
+      const savedAppr = r[`appr_${data.url}`];
+      if (savedAppr?.length) {
+        storedApproaches = savedAppr;
+        buildComparatorTable(storedApproaches);
+        setStat('statApproaches', storedApproaches.length);
+      }
+    });
+
+    addAIMsg(parsed
+      ? `I see you're working on **${data.title || 'this problem'}**. What's your initial thought process?`
+      : `⚠️ I couldn't detect a problem on this page. Navigate to a specific problem to get started.`
+    );
+  }
+}
+
+// ── Badge helpers ─────────────────────────────────────────────────────────────
+function updatePlatformBadge(platform) {
+  const badge = document.getElementById('platformBadge');
+  badge.textContent = platform ? (platform.charAt(0).toUpperCase() + platform.slice(1)) : '—';
+  badge.className = 'cm-badge' + (platform ? ` cm-badge--${platform}` : '');
+}
+
+function setDifficultyBadge(difficulty) {
+  const el = document.getElementById('difficulty');
+  const lower = difficulty.toLowerCase();
+  const cls = lower.includes('easy') ? 'easy' : lower.includes('hard') ? 'hard' : lower.includes('medium') ? 'medium' : '';
+  el.className = `cm-difficulty${cls ? ` cm-difficulty--${cls}` : ''}`;
+  el.textContent = difficulty;
+}
+
+// ── Chat helpers ──────────────────────────────────────────────────────────────
+function addUserMsg(text) {
+  appendMsg('user', esc(text).replace(/\n/g, '<br>'));
+  chatHistory.push({ role: 'user', content: text });
+  setStat('statMessages', chatHistory.filter(m => m.role === 'user').length);
+}
+
+function addAIMsg(text) {
+  const html = esc(text)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n🔹\s?/g, '<br><span class="cm-ai-section">🔹 </span>')
+    .replace(/\n/g, '<br>');
+  appendMsg('ai', html);
+  chatHistory.push({ role: 'assistant', content: text });
+}
+
+function appendMsg(role, html) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `cm-msg cm-msg--${role}`;
+  div.innerHTML = `<div class="cm-msg__avatar">${role === 'ai' ? '🎯' : '👤'}</div><div class="cm-msg__bubble">${html}</div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function showTyping() {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.id = 'typingIndicator'; div.className = 'cm-msg cm-msg--ai';
+  div.innerHTML = `<div class="cm-msg__avatar">🎯</div><div class="cm-msg__bubble"><div class="cm-typing"><div class="cm-typing__dot"></div><div class="cm-typing__dot"></div><div class="cm-typing__dot"></div></div></div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function hideTyping() { document.getElementById('typingIndicator')?.remove(); }
+
+// ── Rung helpers ──────────────────────────────────────────────────────────────
+function resetHintRungs() {
+  for (let i = 1; i <= 4; i++) {
+    const rung = document.getElementById(`rung-${i}`);
+    if (!rung) continue;
+    rung.className = 'cm-rung cm-rung--locked';
+    rung.querySelector('.cm-rung__status').textContent = 'Locked';
+    document.getElementById(`rung-content-${i}`)?.remove();
+  }
+  document.getElementById('hintsUsed').textContent = '0';
+  const btn = document.getElementById('nextHintBtn');
+  btn.disabled = false; btn.textContent = 'Next Hint →';
+  document.getElementById('hintLockToggle').checked = false;
+  hintLocked = false;
+}
+
+function restoreRung(level, text) {
+  const rung = document.getElementById(`rung-${level}`);
+  if (!rung) return;
+  rung.className = 'cm-rung cm-rung--unlocked';
+  rung.querySelector('.cm-rung__status').textContent = 'Revealed';
+  if (text && !document.getElementById(`rung-content-${level}`)) {
+    const el = document.createElement('div');
+    el.className = 'cm-rung__content'; el.id = `rung-content-${level}`; el.textContent = text;
+    rung.appendChild(el);
+  }
+}
+
+// ── Persist ───────────────────────────────────────────────────────────────────
 setInterval(() => {
-    try {
-        if (!currentProblem || !chrome?.storage?.local) return;
-
-        const key = `progress_${currentProblem.url}`;
-
-        chrome.storage.local.set({
-            [key]: {
-                hintsUsed,
-                secondsElapsed,
-                chatCount: chatHistory.length,
-                lastUpdated: Date.now()
-            }
-        });
-    } catch {}
+  if (!currentProblem) return;
+  saveProblemState();
 }, 5000);
 
-// Helper: Escape HTML to prevent XSS
-function escapeHtml(unsafe) {
-    if (unsafe === undefined || unsafe === null) return "";
-
-    return String(unsafe)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+function saveProblemState() {
+  if (!currentProblem) return;
+  chrome.storage.local.set({
+    [`prog_${currentProblem.url}`]: { hintsUsed, secondsElapsed, hintContents, lastUpdated: Date.now() },
+    [`appr_${currentProblem.url}`]: storedApproaches
+  });
 }
 
-// Handle window unload
-window.addEventListener('beforeunload', () => {
-    pauseTimer();
-    chrome.storage.local.set({
-        hintsUsed: hintsUsed,
-        secondsElapsed: secondsElapsed,
-        chatHistory: chatHistory.slice(-20) // Save last 20 messages
-    });
-});
+// ── DOM helpers ───────────────────────────────────────────────────────────────
+function showEl(id) { const el = document.getElementById(id); if (el) el.style.display = 'flex'; }
+function hideEl(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
+function setDot(parentId, state) {
+  const dot = document.getElementById(parentId)?.querySelector('.cm-dot');
+  if (dot) dot.className = `cm-dot cm-dot--${state}`;
+}
+function setStat(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function setDiag(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
+function setCheck(id, val) { const el = document.getElementById(id); if (el) el.checked = val; }
+
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `cm-toast cm-toast--${type}`;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
