@@ -1,4 +1,6 @@
-// background.js — CodeMentor AI Service Worker
+// background.js — CodeMentor AI Service Worker with Featherless Backend
+
+const BACKEND_URL = 'https://codementor-backend-ocuk.onrender.com/api';
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
@@ -11,210 +13,199 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.action.onClicked.addListener((tab) => {
   chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR' }, () => {
-    // suppress "Receiving end does not exist" when content script isn't injected yet
     void chrome.runtime.lastError;
   });
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function getApiKey() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get('geminiApiKey', (r) => resolve(r.geminiApiKey || ''));
+// Helper: Call backend API
+async function callBackend(endpoint, data) {
+  console.log(`[Background] Calling ${endpoint} with:`, { ...data, chatHistory: data.chatHistory?.length || 0 });
+  
+  const response = await fetch(`${BACKEND_URL}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
   });
-}
-
-async function callGemini(prompt) {
-  const key = await getApiKey();
-  if (!key) throw new Error('NO_API_KEY');
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-
-  let attempt = 0;
-  while (attempt < 3) {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
-
-    if (resp.status === 429 || resp.status >= 500) {
-      attempt++;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
-      continue;
-    }
-
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data?.error?.message || 'Gemini API error');
-
-    let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-    return text;
+  
+  if (!response.ok) {
+    const error = await response.text();
+    console.error(`[Background] Backend error:`, error);
+    throw new Error(`Backend error (${response.status}): ${error}`);
   }
-  throw new Error('Gemini: max retries exceeded');
+  
+  const result = await response.json();
+  console.log(`[Background] Response from ${endpoint}:`, { success: result.success, replyLength: result.reply?.length });
+  return result;
 }
 
-// ── Message router ────────────────────────────────────────────────────────────
-
+// Message router
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  console.log('[Background] Received message:', msg.type);
+  
   const handlers = {
-    USER_QUERY:          () => handleUserQuery(msg, sendResponse),
-    HINT_LADDER:         () => handleHintLadder(msg, sendResponse),
+    USER_QUERY: () => handleUserQuery(msg, sendResponse),
+    HINT_LADDER: () => handleHintLadder(msg, sendResponse),
     APPROACH_COMPARATOR: () => handleApproachComparator(msg, sendResponse),
-    MISTAKE_RADAR:       () => handleMistakeRadar(msg, sendResponse),
-    EXPLAIN_LINES:       () => handleExplainLines(msg, sendResponse),
-    SESSION_SUMMARY:     () => handleSessionSummary(msg, sendResponse),
-    STUCK_NUDGE:         () => handleStuckNudge(msg, sendResponse),
-    // Legacy handlers kept for backwards compat
-    REQUEST_HINT:        () => handleHintLadder({ ...msg, level: msg.hintLevel || 1 }, sendResponse),
-    GET_STORAGE:         () => { chrome.storage.local.get(msg.keys, sendResponse); },
-    SAVE_DATA:           () => { chrome.storage.local.set(msg.data, () => sendResponse({ success: true })); },
-    SAVE_API_KEY:        () => { chrome.storage.local.set({ geminiApiKey: msg.key }, () => sendResponse({ success: true })); },
-    CHECK_API_KEY:       () => { getApiKey().then(k => sendResponse({ hasKey: !!k })); },
+    MISTAKE_RADAR: () => handleMistakeRadar(msg, sendResponse),
+    EXPLAIN_LINES: () => handleExplainLines(msg, sendResponse),
+    SESSION_SUMMARY: () => handleSessionSummary(msg, sendResponse),
+    STUCK_NUDGE: () => handleStuckNudge(msg, sendResponse),
+    ANALYZE_CODE: () => handleAnalyzeCode(msg, sendResponse),
+    GENERATE_VISUAL: () => handleGenerateVisual(msg, sendResponse),
+    GET_STORAGE: () => { chrome.storage.local.get(msg.keys, sendResponse); return true; },
+    SAVE_DATA: () => { chrome.storage.local.set(msg.data, () => sendResponse({ success: true })); return true; }
   };
 
   const fn = handlers[msg.type];
   if (fn) { fn(); return true; }
+  return false;
 });
 
-// ── Feature handlers ──────────────────────────────────────────────────────────
-
+// Handlers with proper context
 async function handleUserQuery(msg, sendResponse) {
   try {
-    const problem = msg.problemData || {};
-    const prompt = `You are an elite DSA mentor. Teach thinking, not copying. Never give full solutions or full code.
-
-PROBLEM:
-${problem.fullProblemText || problem.description || 'Not provided'}
-
-CHAT HISTORY:
-${(msg.chatHistory || []).map(m => `${m.role}: ${m.content}`).join('\n')}
-
-USER: ${msg.query}
-
-Return VALID JSON only — no text outside JSON:
-{
-  "reply": "Mentor explanation. Use sections like \\n🔹 Label\\n for structure.",
-  "approaches": [
-    {"name":"...", "intuition":"...", "steps":"...", "time":"O(...)", "space":"O(...)", "example":"..."}
-  ]
-}
-
-Generate at least 2 approaches. No complete code solutions.`;
-
-    const raw = await callGemini(prompt);
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch { parsed = { reply: raw, approaches: [] }; }
-    if (!Array.isArray(parsed.approaches)) parsed.approaches = [];
-    sendResponse({ success: true, reply: parsed.reply || '', approaches: parsed.approaches });
-  } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    console.log('[Background] Processing user query:', msg.query);
+    console.log('[Background] Chat history length:', msg.chatHistory?.length);
+    
+    // Ensure we're sending the full chat history for context
+    const result = await callBackend('chat', {
+      query: msg.query,
+      problemData: msg.problemData,
+      chatHistory: msg.chatHistory || []  // Make sure this is sent
+    });
+    
+    sendResponse({ success: true, reply: result.reply, approaches: result.approaches || [] });
+  } catch (error) {
+    console.error('[Background] UserQuery error:', error);
+    sendResponse({ success: false, error: error.message });
   }
 }
 
 async function handleHintLadder(msg, sendResponse) {
   try {
-    const { level, problemData } = msg;
-    const levelLabels = ['', 'Intuition (tiny nudge)', 'Approach outline', 'Key observation', 'Pseudo-code (no full code)'];
-    const prompt = `You are a DSA mentor providing a LEVEL ${level} hint (${levelLabels[level] || ''}).
-Problem: ${problemData?.fullProblemText || problemData?.description || 'Unknown'}
-Rules: No full code. No complete algorithm. Just the hint for level ${level}.
-Return ONLY the hint text (plain text, no JSON, no markdown headers).`;
-    const hint = await callGemini(prompt);
-    sendResponse({ success: true, hint: hint.trim() });
-  } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    const result = await callBackend('hint', {
+      level: msg.level,
+      problemData: msg.problemData
+    });
+    sendResponse({ success: true, hint: result.hint });
+  } catch (error) {
+    console.error('[Background] Hint error:', error);
+    sendResponse({ success: false, error: error.message });
   }
 }
 
 async function handleApproachComparator(msg, sendResponse) {
   try {
-    const problem = msg.problemData || {};
-    const prompt = `You are a DSA expert. Compare 2-3 approaches for this problem.
-Problem: ${problem.fullProblemText || problem.description || 'Unknown'}
-Return VALID JSON array only (no other text):
-[{"name":"...","idea":"1-sentence idea","time":"O(...)","space":"O(...)","pitfalls":"common mistake","when":"when to use"}]
-No full code. 2-3 approaches max.`;
-    const raw = await callGemini(prompt);
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch { parsed = []; }
-    if (!Array.isArray(parsed)) parsed = [];
-    sendResponse({ success: true, comparisons: parsed });
-  } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    const result = await callBackend('compare-approaches', {
+      problemData: msg.problemData
+    });
+    sendResponse({ success: true, comparisons: result.comparisons || [] });
+  } catch (error) {
+    console.error('[Background] Compare error:', error);
+    sendResponse({ success: false, error: error.message });
   }
 }
 
 async function handleMistakeRadar(msg, sendResponse) {
   try {
-    const { userText, platform } = msg;
-    const prompt = `DSA pitfall detector. Analyze this text for common mistakes.
-Platform: ${platform}
-Text: ${userText}
-Return JSON array of pitfall names only (max 5, short labels like "Off-by-one"):
-["Pitfall 1", "Pitfall 2"]
-Common ones: Off-by-one, Integer overflow, Null pointer, Stack overflow, Wrong base case, Infinite loop, Empty input, Modulo error, Wrong invariant`;
-    const raw = await callGemini(prompt);
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch { parsed = []; }
-    if (!Array.isArray(parsed)) parsed = [];
-    sendResponse({ success: true, pitfalls: parsed.slice(0, 5) });
-  } catch (e) {
+    const result = await callBackend('mistake-radar', {
+      code: msg.code || msg.userText,
+      userText: msg.userText,
+      platform: msg.platform
+    });
+    sendResponse({ success: true, pitfalls: result.pitfalls || [] });
+  } catch (error) {
+    console.error('[Background] Mistake radar error:', error);
     sendResponse({ success: false, pitfalls: [] });
   }
 }
 
 async function handleExplainLines(msg, sendResponse) {
   try {
-    const { code } = msg;
-    const lines = code.trim().split('\n');
-    if (lines.length > 30) {
-      sendResponse({ success: false, error: 'Snippet too long (max 30 lines)' });
-      return;
-    }
-    const prompt = `Explain this code snippet line-by-line for a DSA learner.
-Do NOT rewrite or provide a solution. Just explain what each line does.
-Code:
-${code}
-Return plain text with "Line N: explanation" format.`;
-    const explanation = await callGemini(prompt);
-    sendResponse({ success: true, explanation: explanation.trim() });
-  } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    const result = await callBackend('analyze-code', {
+      code: msg.code,
+      language: 'javascript'
+    });
+    const explanation = formatCodeExplanation(result, msg.code);
+    sendResponse({ success: true, explanation });
+  } catch (error) {
+    console.error('[Background] Explain error:', error);
+    sendResponse({ success: false, error: error.message });
   }
 }
 
 async function handleSessionSummary(msg, sendResponse) {
   try {
-    const { problem, chatHistory, hintsRevealed, approaches, timeElapsed } = msg;
-    const prompt = `Create a concise DSA session summary in markdown.
-Problem: ${problem?.title || 'Unknown'} (${problem?.platform || ''})
-Time: ${Math.floor((timeElapsed || 0) / 60)} minutes | Hints: ${hintsRevealed} | Messages: ${chatHistory?.length || 0}
-Approaches: ${approaches?.map(a => a.name).join(', ') || 'None'}
-Chat highlights:
-${(chatHistory || []).slice(-6).map(m => `${m.role}: ${m.content.slice(0, 120)}`).join('\n')}
-
-Write markdown with sections: ## Problem, ## Approaches Explored, ## Key Insights, ## Pitfalls to Watch, ## Next Steps`;
-    const summary = await callGemini(prompt);
-    sendResponse({ success: true, summary: summary.trim() });
-  } catch (e) {
-    sendResponse({ success: false, error: e.message });
+    const result = await callBackend('session-summary', {
+      problem: msg.problem,
+      chatHistory: msg.chatHistory,
+      hintsRevealed: msg.hintsRevealed,
+      approaches: msg.approaches,
+      timeElapsed: msg.timeElapsed
+    });
+    sendResponse({ success: true, summary: result.summary });
+  } catch (error) {
+    console.error('[Background] Session summary error:', error);
+    sendResponse({ success: false, error: error.message });
   }
 }
 
 async function handleStuckNudge(msg, sendResponse) {
   try {
-    const problem = msg.problemData || {};
-    const prompt = `A student is stuck on a DSA problem for ${msg.minutes || 15} minutes.
-Problem: ${problem.title || 'Unknown'} — ${(problem.fullProblemText || '').slice(0, 300)}
-Generate ONE short guiding question (1-2 sentences) that nudges without spoiling.
-Ask about constraints, edge cases, or data structures. Return plain text only.`;
-    const nudge = await callGemini(prompt);
-    sendResponse({ success: true, nudge: nudge.trim() });
-  } catch (e) {
+    const result = await callBackend('stuck-nudge', {
+      minutes: msg.minutes,
+      problemData: msg.problemData
+    });
+    sendResponse({ success: true, nudge: result.nudge });
+  } catch (error) {
+    console.error('[Background] Stuck nudge error:', error);
     sendResponse({ success: false, nudge: 'Have you considered all edge cases and constraints?' });
   }
+}
+
+async function handleAnalyzeCode(msg, sendResponse) {
+  try {
+    const result = await callBackend('analyze-code', {
+      code: msg.code,
+      language: msg.language || 'javascript'
+    });
+    sendResponse({ success: true, ...result });
+  } catch (error) {
+    console.error('[Background] Analyze code error:', error);
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleGenerateVisual(msg, sendResponse) {
+  try {
+    const result = await callBackend('generate-visual', {
+      algorithm: msg.algorithm,
+      data: msg.data,
+      type: msg.type
+    });
+    sendResponse({ success: true, ...result });
+  } catch (error) {
+    console.error('[Background] Generate visual error:', error);
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+function formatCodeExplanation(analysis, code) {
+  const lines = code.split('\n');
+  let explanation = '## 📝 Code Analysis\n\n';
+  
+  explanation += `**Time Complexity:** ${analysis.timeComplexity || 'Not determined'}\n`;
+  explanation += `**Space Complexity:** ${analysis.spaceComplexity || 'Not determined'}\n\n`;
+  
+  if (analysis.patterns && analysis.patterns.length) {
+    explanation += `**📚 Patterns Detected:** ${analysis.patterns.join(', ')}\n\n`;
+  }
+  
+  if (analysis.suggestions && analysis.suggestions.length) {
+    explanation += `**💡 Suggestions:**\n`;
+    analysis.suggestions.forEach(s => explanation += `- ${s}\n`);
+    explanation += '\n';
+  }
+  
+  return explanation;
 }

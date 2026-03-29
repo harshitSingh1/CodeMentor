@@ -1,4 +1,4 @@
-// sidebar.js — CodeMentor AI Sidebar Logic
+// sidebar.js — CodeMentor AI Sidebar Logic (Enhanced)
 
 'use strict';
 
@@ -15,9 +15,9 @@ let chatHistory = [];
 let storedApproaches = [];
 let stuckNudgeShown = false;
 let settings = { stuckEnabled: true, stuckThreshold: 15, mistakeRadarEnabled: true };
+let lastProblemUrl = null; // Track problem URL changes
 
-// Wraps chrome.runtime.sendMessage with lastError handling.
-// Prevents "Unchecked runtime.lastError" warnings and handles service-worker restarts.
+// Wraps chrome.runtime.sendMessage with lastError handling
 function sendMsg(msg, cb) {
   chrome.runtime.sendMessage(msg, (resp) => {
     if (chrome.runtime.lastError) {
@@ -41,13 +41,21 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initSidebar() {
-  chrome.storage.local.get(['consentGiven', 'geminiApiKey', 'settings'], (r) => {
+  // Check if backend is healthy
+  fetch('https://codementor-backend-ocuk.onrender.com/health')
+    .then(res => res.json())
+    .then(data => {
+      console.log('Backend connected:', data);
+      setDot('statusApi', 'on');
+    })
+    .catch(err => {
+      console.warn('Backend not reachable:', err);
+      setDot('statusApi', 'off');
+    });
+
+  chrome.storage.local.get(['consentGiven', 'settings'], (r) => {
     if (!r.consentGiven) {
       showEl('consentOverlay');
-    } else if (!r.geminiApiKey) {
-      showEl('apiKeyOverlay');
-    } else {
-      setDot('statusApi', 'on');
     }
     if (r.settings) Object.assign(settings, r.settings);
     applySettings();
@@ -56,23 +64,9 @@ function initSidebar() {
   document.getElementById('consentAccept').addEventListener('click', () => {
     chrome.storage.local.set({ consentGiven: true }, () => {
       hideEl('consentOverlay');
-      chrome.storage.local.get('geminiApiKey', (r) => {
-        if (!r.geminiApiKey) showEl('apiKeyOverlay');
-      });
     });
   });
 
-  document.getElementById('overlayApiKeySave').addEventListener('click', () => {
-    const key = document.getElementById('overlayApiKeyInput').value.trim();
-    if (!key) { document.getElementById('overlayApiKeyError').style.display = 'block'; return; }
-    chrome.storage.local.set({ geminiApiKey: key }, () => {
-      hideEl('apiKeyOverlay');
-      setDot('statusApi', 'on');
-      toast('API key saved', 'success');
-    });
-  });
-
-  document.getElementById('overlayApiKeySkip').addEventListener('click', () => hideEl('apiKeyOverlay'));
   document.getElementById('closeSidebar').addEventListener('click', () => {
     window.parent.postMessage({ type: 'TOGGLE_SIDEBAR' }, '*');
   });
@@ -97,7 +91,7 @@ function switchTab(id) {
   document.querySelectorAll('.cm-pane').forEach(p => p.classList.toggle('cm-pane--active', p.id === `pane-${id}`));
 }
 
-// ── Chat ──────────────────────────────────────────────────────────────────────
+// ── Chat with Visualizations ──────────────────────────────────────────────────
 function setupChat() {
   document.getElementById('sendMessage').addEventListener('click', sendMessage);
   document.getElementById('userInput').addEventListener('keydown', (e) => {
@@ -106,6 +100,7 @@ function setupChat() {
   document.getElementById('nudgeClose').addEventListener('click', () => hideEl('stuckNudge'));
   document.getElementById('explainBarClose').addEventListener('click', () => hideEl('explainBar'));
   document.getElementById('explainLinesBtn').addEventListener('click', explainSelectedCode);
+  document.getElementById('analyzeCodeBtn').addEventListener('click', analyzeCurrentCode);
 
   document.getElementById('userInput').addEventListener('input', (e) => {
     const val = e.target.value.trim();
@@ -121,6 +116,7 @@ function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
 
+  // Add user message to UI and history BEFORE sending
   addUserMsg(text);
   input.value = '';
   hideEl('explainBar');
@@ -131,16 +127,21 @@ function sendMessage() {
 
   if (settings.mistakeRadarEnabled) runMistakeRadar(text);
 
+  // IMPORTANT: Send the ENTIRE chat history for context, not just last 10
+  console.log('[Sidebar] Sending message. Chat history length:', chatHistory.length);
+  console.log('[Sidebar] Current problem:', currentProblem?.title);
+
   sendMsg({
     type: 'USER_QUERY',
     query: text,
     problemData: currentProblem,
-    chatHistory: chatHistory.slice(-10)
+    chatHistory: chatHistory  // Send FULL history, not slice
   }, (resp) => {
     hideTyping();
     sendBtn.disabled = false;
 
     if (resp?.success) {
+      console.log('[Sidebar] Got response, adding AI message');
       addAIMsg(resp.reply);
       if (resp.approaches?.length) {
         storedApproaches = resp.approaches;
@@ -148,9 +149,9 @@ function sendMessage() {
         setStat('statApproaches', storedApproaches.length);
         buildComparatorTable(storedApproaches);
       }
-    } else if (resp?.error === 'NO_API_KEY') {
-      addAIMsg('⚠️ API key not set. Go to Settings tab to add your Gemini key.');
-      showEl('apiKeyOverlay');
+    } else if (resp?.error) {
+      console.error('[Sidebar] Error:', resp.error);
+      addAIMsg(`⚠️ Error: ${resp.error}. Please try again.`);
     } else {
       addAIMsg("I couldn't process that. Please rephrase.");
     }
@@ -158,11 +159,112 @@ function sendMessage() {
   });
 }
 
+function debugChatHistory() {
+  console.log('=== Chat History Debug ===');
+  console.log('Total messages:', chatHistory.length);
+  chatHistory.forEach((msg, idx) => {
+    console.log(`${idx + 1}. ${msg.role}: ${msg.content.substring(0, 100)}...`);
+  });
+  console.log('Current problem:', currentProblem?.title);
+  console.log('=========================');
+}
+
+function detectAndGenerateVisual(text) {
+  const algorithms = ['binary search', 'bubble sort', 'quick sort', 'merge sort', 'dfs', 'bfs', 'dijkstra'];
+  const lowerText = text.toLowerCase();
+  
+  for (const algo of algorithms) {
+    if (lowerText.includes(algo)) {
+      sendMsg({
+        type: 'GENERATE_VISUAL',
+        algorithm: algo,
+        type: 'flowchart'
+      }, (resp) => {
+        if (resp?.success && resp.steps) {
+          addVisualizationCard(algo, resp);
+        }
+      });
+      break;
+    }
+  }
+}
+
+function addVisualizationCard(algorithm, visualData) {
+  const chat = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'cm-msg cm-msg--visualization';
+  div.innerHTML = `
+    <div class="cm-visualization-card">
+      <div class="cm-visualization-header">
+        <span>📊 ${algorithm.toUpperCase()} Visualization</span>
+        <button class="cm-icon-btn" onclick="copyToClipboard(this)">📋</button>
+      </div>
+      <div class="cm-visualization-steps">
+        ${visualData.steps?.map(s => `<div class="cm-step">${s}</div>`).join('') || ''}
+      </div>
+      <div class="cm-visualization-complexity">
+        ${visualData.complexity || ''}
+      </div>
+    </div>
+  `;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function analyzeCurrentCode() {
+  // Get code from editor on the page
+  const code = getCodeFromPage();
+  if (!code) {
+    addAIMsg("No code detected on the current page. Please write or paste code in the chat to analyze.");
+    return;
+  }
+  
+  addUserMsg("[Analyze my current code]");
+  showTyping();
+  
+  sendMsg({ type: 'ANALYZE_CODE', code, language: 'javascript' }, (resp) => {
+    hideTyping();
+    if (resp?.success) {
+      let analysis = `## 🔍 Code Analysis\n\n`;
+      analysis += `**Time Complexity:** ${resp.timeComplexity || 'N/A'}\n`;
+      analysis += `**Space Complexity:** ${resp.spaceComplexity || 'N/A'}\n\n`;
+      if (resp.patterns?.length) {
+        analysis += `**Patterns:** ${resp.patterns.join(', ')}\n\n`;
+      }
+      if (resp.suggestions?.length) {
+        analysis += `**Suggestions:**\n${resp.suggestions.map(s => `- ${s}`).join('\n')}\n`;
+      }
+      addAIMsg(analysis);
+    } else {
+      addAIMsg("Could not analyze code. " + (resp?.error || ''));
+    }
+  });
+}
+
+function getCodeFromPage() {
+  // Try to get code from various editors
+  const selectors = [
+    '.view-lines',           // LeetCode
+    '.CodeMirror-code',      // CodeMirror
+    '#sourceCodeTextarea',   // Codeforces
+    '.monaco-editor .view-lines'
+  ];
+  
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      if (el.tagName === 'TEXTAREA') return el.value;
+      return el.innerText;
+    }
+  }
+  return null;
+}
+
 function runMistakeRadar(text) {
   sendMsg({ type: 'MISTAKE_RADAR', userText: text, platform: currentPlatform }, (resp) => {
     if (resp?.pitfalls?.length) {
       const chips = document.getElementById('radarChips');
-      chips.innerHTML = resp.pitfalls.map(p => `<span class="cm-chip">${esc(p)}</span>`).join('');
+      chips.innerHTML = resp.pitfalls.map(p => `<span class="cm-chip">⚠️ ${esc(p)}</span>`).join('');
       document.getElementById('mistakeRadar').style.display = 'flex';
     }
   });
@@ -222,11 +324,10 @@ function revealNextHint() {
       rung.classList.remove('cm-rung--active');
       rung.classList.add('cm-rung--unlocked');
     } else {
-      // Reset rung to locked so a retry attempt is clean (no duplicate IDs)
       el?.remove();
       rung.className = 'cm-rung cm-rung--locked';
       rung.querySelector('.cm-rung__status').textContent = 'Locked';
-      toast(resp?.error === 'NO_API_KEY' ? 'API key required — go to Settings' : 'Could not load hint, try again', 'error');
+      toast(resp?.error || 'Could not load hint, try again', 'error');
     }
     document.getElementById('hintsUsed').textContent = hintsUsed;
     setStat('statHints', hintsUsed);
@@ -256,7 +357,6 @@ function setupProgress() {
     } else {
       clearTimeout(armTimer);
       chrome.storage.local.clear(() => {
-        // Reset all in-memory state
         hintsUsed = 0; secondsElapsed = 0; chatHistory = [];
         storedApproaches = []; hintContents = {};
         currentProblem = null; currentPlatform = 'unknown';
@@ -334,7 +434,7 @@ function copySession() {
         .then(() => toast('Session summary copied!', 'success'))
         .catch(() => toast('Copy failed', 'error'));
     } else {
-      toast(resp?.error === 'NO_API_KEY' ? 'API key required' : 'Could not generate summary', 'error');
+      toast(resp?.error || 'Could not generate summary', 'error');
     }
   });
 }
@@ -346,7 +446,7 @@ function buildComparatorTable(approaches) {
   const rows = approaches.map(a => `
     <tr>
       <td><strong>${esc(a.name || '')}</strong></td>
-      <td>${esc(a.intuition || a.idea || '')}</td>
+      <td>${esc(a.idea || '')}</td>
       <td>${esc(a.time || '')}</td>
       <td>${esc(a.space || '')}</td>
     </tr>`).join('');
@@ -359,14 +459,6 @@ function buildComparatorTable(approaches) {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function setupSettings() {
-  document.getElementById('saveApiKey').addEventListener('click', () => {
-    const key = document.getElementById('apiKeyInput').value.trim();
-    if (!key) { toast('Enter a valid API key', 'error'); return; }
-    chrome.storage.local.set({ geminiApiKey: key }, () => {
-      toast('API key saved', 'success'); setDot('statusApi', 'on');
-    });
-  });
-
   ['stuckEnabled', 'stuckThreshold', 'mistakeRadarEnabled'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', saveSettings);
@@ -391,60 +483,80 @@ function setupMessages() {
   });
 }
 
+function checkProblemChanged(newProblem) {
+  if (!newProblem || !newProblem.url) return false;
+  
+  if (lastProblemUrl !== newProblem.url) {
+    console.log('[Sidebar] Problem changed from', lastProblemUrl, 'to', newProblem.url);
+    lastProblemUrl = newProblem.url;
+    
+    // Clear old chat history when problem changes
+    if (chatHistory.length > 0) {
+      chatHistory = [];
+      document.getElementById('chatMessages').innerHTML = '';
+      
+      // Add a system message about problem change
+      const systemMsg = document.createElement('div');
+      systemMsg.className = 'cm-msg cm-msg--system';
+      systemMsg.innerHTML = `<div class="cm-msg__bubble cm-msg__bubble--system">
+        🔄 Problem changed to <strong>${newProblem.title || 'new problem'}</strong>. Previous context cleared.
+      </div>`;
+      document.getElementById('chatMessages').appendChild(systemMsg);
+    }
+    
+    return true;
+  }
+  return false;
+}
+
 function onProblemData(data) {
   if (!data) return;
-  const isNew = !currentProblem || currentProblem.url !== data.url;
-
-  if (isNew) {
-    hintsUsed = 0; hintContents = {}; chatHistory = [];
-    storedApproaches = []; stuckNudgeShown = false;
-    secondsElapsed = 0; pauseTimer(); updateTimerDisplay();
+  
+  // Check if problem changed
+  const problemChanged = checkProblemChanged(data);
+  
+  if (problemChanged || !currentProblem || currentProblem.url !== data.url) {
+    // Reset all state for new problem
+    hintsUsed = 0;
+    hintContents = {};
+    storedApproaches = [];
+    stuckNudgeShown = false;
+    secondsElapsed = 0;
+    
+    pauseTimer();
+    updateTimerDisplay();
     resetHintRungs();
-    document.getElementById('chatMessages').innerHTML = '';
+    
     document.getElementById('mistakeRadar').style.display = 'none';
     document.getElementById('stuckNudge').style.display = 'none';
     document.getElementById('approachComparatorCard').style.display = 'none';
+    
+    // Reset stats display
+    document.getElementById('hintsUsed').textContent = '0';
+    setStat('statHints', 0);
+    setStat('statApproaches', 0);
   }
 
   currentProblem = data;
+  currentPlatform = data.platform || 'unknown';
 
   document.getElementById('problemTitle').textContent = data.title || 'Unknown Problem';
   setDifficultyBadge(data.difficulty || '');
+  updatePlatformBadge(currentPlatform);
 
   const parsed = !!(data.title || data.description);
   setDot('statusParse', parsed ? 'on' : 'off');
-  setDiag('diagPageType', /\/(problems?|challenges?|contest[^/]*\/problem)\//i.test(data.url || '') ? 'problem' : 'other');
+  setDiag('diagPlatform', currentPlatform || '—');
+  setDiag('diagPageType', /\/(problems?|challenges?|contest[^/]*\/problem)/i.test(data.url || '') ? 'problem' : 'other');
   setDiag('diagTitleLen', `${(data.title || '').length} chars`);
   setDiag('diagStmtLen', `${(data.fullProblemText || data.description || '').length} chars`);
   setDiag('diagTimestamp', new Date().toLocaleTimeString());
   setDiag('diagError', '—');
 
-  if (isNew) {
-    chrome.storage.local.get([`prog_${data.url}`, `appr_${data.url}`], (r) => {
-      const saved = r[`prog_${data.url}`];
-      if (saved) {
-        secondsElapsed = saved.secondsElapsed || 0;
-        hintsUsed = saved.hintsUsed || 0;
-        hintContents = saved.hintContents || {};
-        updateTimerDisplay();
-        document.getElementById('hintsUsed').textContent = hintsUsed;
-        setStat('statHints', hintsUsed);
-        setStat('statTime', `${Math.floor(secondsElapsed / 60)} min`);
-        for (let i = 1; i <= hintsUsed; i++) restoreRung(i, hintContents[i] || '');
-        const btn = document.getElementById('nextHintBtn');
-        btn.disabled = hintsUsed >= 4;
-        btn.textContent = hintsUsed >= 4 ? 'All hints revealed' : 'Next Hint →';
-      }
-      const savedAppr = r[`appr_${data.url}`];
-      if (savedAppr?.length) {
-        storedApproaches = savedAppr;
-        buildComparatorTable(storedApproaches);
-        setStat('statApproaches', storedApproaches.length);
-      }
-    });
-
+  // Only add welcome message for new problem
+  if (problemChanged) {
     addAIMsg(parsed
-      ? `I see you're working on **${data.title || 'this problem'}**. What's your initial thought process?`
+      ? `🎯 I see you're working on **${data.title || 'this problem'}**. What's your initial thought process?`
       : `⚠️ I couldn't detect a problem on this page. Navigate to a specific problem to get started.`
     );
   }
@@ -472,11 +584,75 @@ function addUserMsg(text) {
   setStat('statMessages', chatHistory.filter(m => m.role === 'user').length);
 }
 
+// Enhanced AI response formatting
+function formatAIResponse(text) {
+  if (!text) return '';
+  
+  let formatted = text;
+  
+  // Remove any raw JSON that might be showing
+  formatted = formatted.replace(/```json\s*\{[\s\S]*?\}\s*```/g, '');
+  formatted = formatted.replace(/^\{\s*"reply":\s*"/, '');
+  formatted = formatted.replace(/"\s*\}$/, '');
+  
+  // Format headings
+  formatted = formatted.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+  formatted = formatted.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+  formatted = formatted.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+  
+  // Format approach sections
+  formatted = formatted.replace(/\*\*(\d+\.\s*[^*]+)\*\*/g, (match, content) => {
+    return `<div class="cm-approach-card">
+      <div class="cm-approach-header">
+        <span class="cm-approach-icon">💡</span>
+        <span class="cm-approach-name">${esc(content)}</span>
+      </div>`;
+  });
+  
+  // Close approach cards
+  formatted = formatted.replace(/(Time: O\([^)]+\))/g, '<span class="cm-complexity-badge cm-complexity-good">⏱️ $1</span>');
+  formatted = formatted.replace(/(Space: O\([^)]+\))/g, '<span class="cm-complexity-badge cm-complexity-good">💾 $1</span>');
+  
+  // Format code blocks
+  formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    return `<div class="cm-code-block">
+      <div class="cm-code-header">
+        <span>${lang || 'code'}</span>
+        <button class="cm-copy-btn" onclick="copyCode(this)">📋 Copy</button>
+      </div>
+      <div class="cm-code-content"><pre><code>${esc(code.trim())}</code></pre></div>
+    </div>`;
+  });
+  
+  // Format inline code
+  formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
+  
+  // Format bold
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  
+  // Format lists
+  formatted = formatted.replace(/^[-*] (.*)$/gm, '<li>$1</li>');
+  formatted = formatted.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+  
+  // Format line breaks
+  formatted = formatted.replace(/\n/g, '<br>');
+  
+  return formatted;
+}
+
+// Add copy code function
+window.copyCode = function(btn) {
+  const codeBlock = btn.closest('.cm-code-block').querySelector('.cm-code-content code');
+  const text = codeBlock.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const originalText = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => { btn.textContent = originalText; }, 2000);
+  });
+};
+
 function addAIMsg(text) {
-  const html = esc(text)
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n🔹\s?/g, '<br><span class="cm-ai-section">🔹 </span>')
-    .replace(/\n/g, '<br>');
+  const html = formatAIResponse(text);
   appendMsg('ai', html);
   chatHistory.push({ role: 'assistant', content: text });
 }
@@ -572,3 +748,10 @@ function esc(str) {
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
+
+// Global function for copy button
+window.copyToClipboard = function(btn) {
+  const card = btn.closest('.cm-visualization-card');
+  const text = card.innerText;
+  navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success'));
+};
