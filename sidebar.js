@@ -1,4 +1,13 @@
-// sidebar.js — CodeMentor AI Sidebar Logic (Enhanced)
+/**
+ * sidebar.js — CodeMentor AI Sidebar Logic (Enhanced)
+ * 
+ * NOTE ON API KEYS:
+ * In v2.0, we migrated from client-side Gemini API calls to a central, 
+ * stateless API Gateway (Featherless Backend). This removes the need for
+ * users to input their own 'Google Gemini API key' in the extension UI,
+ * significantly improving onboarding. Old references to user setup keys
+ * have been cleaned up to prevent tech debt confusion.
+ */
 
 'use strict';
 
@@ -127,7 +136,14 @@ function sendMessage() {
 
   if (settings.mistakeRadarEnabled) runMistakeRadar(text);
 
-  // IMPORTANT: Send the ENTIRE chat history for context, not just last 10
+  /**
+   * ARCHITECTURE NOTE:
+   * We send the ENTIRE chat history for context because our hosted proxy 
+   * backend (Featherless Backend) is entirely stateless. 
+   * It performs server-side token management, truncation, and database
+   * routing securely without the client needing to hold an API key. 
+   * This guarantees user privacy as we do not persist sessions in a DB.
+   */
   console.log('[Sidebar] Sending message. Chat history length:', chatHistory.length);
   console.log('[Sidebar] Current problem:', currentProblem?.title);
 
@@ -135,7 +151,7 @@ function sendMessage() {
     type: 'USER_QUERY',
     query: text,
     problemData: currentProblem,
-    chatHistory: chatHistory  // Send FULL history, not slice
+    chatHistory: chatHistory
   }, (resp) => {
     hideTyping();
     sendBtn.disabled = false;
