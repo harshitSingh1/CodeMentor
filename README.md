@@ -28,13 +28,7 @@
 
 ---
 
-## Setup
 
-1. Get a free [Google Gemini API key](https://aistudio.google.com/app/apikey)
-2. Open the sidebar → **Settings** tab → paste your key → **Save**
-3. The key is stored in `chrome.storage.local` — never sent to CodeMentor servers
-
----
 
 ## Features
 
@@ -75,9 +69,9 @@ Session timer with start/pause/reset. Live stats: time, hints, messages, approac
 
 ## Privacy
 
-- Problem statements and your messages are sent to Google Gemini to generate responses
-- Your API key, timer, hints, and chat history are stored **only on your device** in `chrome.storage.local`
-- CodeMentor has no backend — zero data collection
+- **Data Processing:** Problem statements, your active code, and chat messages are securely routed through the CodeMentor API backend to generate AI responses.
+- **Local Storage:** Your timer, hints, and settings are stored locally on your device in `chrome.storage.local`.
+- **Stateless Architecture:** The backend handles requests statelessly. We do not persist your chat history or problem data on our servers after generating a response.
 
 [Google Privacy Policy](https://policies.google.com/privacy)
 

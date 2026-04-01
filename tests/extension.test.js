@@ -338,8 +338,12 @@ console.log(BOLD('╚═══════════════════�
     const puppeteer = require('puppeteer-core');
     const extPath   = path.resolve(__dirname, '..');
 
+    const chromePath = process.platform === 'win32'
+      ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+      : '/usr/bin/chromium';
+
     browser = await puppeteer.launch({
-      executablePath: '/usr/bin/chromium',
+      executablePath: chromePath,
       headless: 'new',
       args: [
         `--disable-extensions-except=${extPath}`,

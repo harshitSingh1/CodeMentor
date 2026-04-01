@@ -4,7 +4,7 @@
   "description": "<div align=\"center\">",
   "main": "background.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/extension.test.js"
   },
   "repository": {
     "type": "git",
